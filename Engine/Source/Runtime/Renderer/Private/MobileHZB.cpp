@@ -6,13 +6,14 @@
 
 
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileSceneTextures, )
-//Mobile…œSceneDepth «≤ªª·–¥≥ˆµƒ, À˘“‘ π”√SceneColor
+//Mobile‰∏äSceneDepthÊòØ‰∏ç‰ºöÂÜôÂá∫ÁöÑ, ÊâÄ‰ª•‰ΩøÁî®SceneColor
 SHADER_PARAMETER_RDG_TEXTURE(Texture2D, MobileSceneColorBuffer)
 
 END_SHADER_PARAMETER_STRUCT()
 
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileHZBParameters, )
 SHADER_PARAMETER(FVector4, DispatchThreadIdToBufferUV)
+SHADER_PARAMETER(FVector4, HZBInvDeviceZToWorldZTransform)
 SHADER_PARAMETER(FVector2D, InputViewportMaxBound)
 SHADER_PARAMETER(FVector2D, InvSize)
 
@@ -27,6 +28,10 @@ class FMobileHZBBuildPS : public FGlobalShader
 {
 	DECLARE_GLOBAL_SHADER(FMobileHZBBuildPS);
 	SHADER_USE_PARAMETER_STRUCT(FMobileHZBBuildPS, FGlobalShader)
+
+	//Á¨¨‰∏Ä‰∏™Pass,‰ªéalpha‰∏≠ÂèñLinearDepth
+	class FDimSceneDepth : SHADER_PERMUTATION_BOOL("FDimSceneDepth");
+	using FPermutationDomain = TShaderPermutationDomain<FDimSceneDepth>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FMobileHZBParameters, Shared)
@@ -88,6 +93,7 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 		ShaderParameters.InvSize = FVector2D(1.0f / SrcSize.X, 1.0f / SrcSize.Y);
 		ShaderParameters.InputViewportMaxBound = InputViewportMaxBound;
 		ShaderParameters.DispatchThreadIdToBufferUV = DispatchThreadIdToBufferUV;
+		ShaderParameters.HZBInvDeviceZToWorldZTransform = View.InvDeviceZToWorldZTransform;
 		ShaderParameters.ParentTextureMip = ParentTextureMip;
 		ShaderParameters.ParentTextureMipSampler = TStaticSamplerState<SF_Point>::GetRHI();
 		//ShaderParameters.View = View.ViewUniformBuffer;
@@ -138,7 +144,10 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 			PassParameters->Shared = ShaderParameters;
 			PassParameters->RenderTargets[0] = FRenderTargetBinding(FurthestHZBTexture, ERenderTargetLoadAction::ENoAction, StartDestMip);
 
-			TShaderMapRef<FMobileHZBBuildPS> PixelShader(View.ShaderMap);
+			FMobileHZBBuildPS::FPermutationDomain PermutationVector;
+			PermutationVector.Set<FMobileHZBBuildPS::FDimSceneDepth>(StartDestMip == 0);  //use SceneColor Only Mipmap is 0 
+
+			TShaderMapRef<FMobileHZBBuildPS> PixelShader(View.ShaderMap, PermutationVector);
 
 			// TODO(RDG): remove ERDGPassFlags::GenerateMips to use FPixelShaderUtils::AddFullscreenPass().
 			ClearUnusedGraphResources(PixelShader, PassParameters);
@@ -204,50 +213,30 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 
 	FSceneViewState* ViewState = (FSceneViewState*)Views[0].State;
 
-	//¥Ê‘⁄œﬂ≥Ã–¥»Î÷µ ±∆‰À˚¥ÌŒÛ,∆‰ µ”– ˝¡ø≈–∂œŒﬁÀ˘ŒΩ
+	//Â≠òÂú®Á∫øÁ®ãÂÜôÂÖ•ÂÄºÊó∂ÂÖ∂‰ªñÈîôËØØ,ÂÖ∂ÂÆûÊúâÊï∞ÈáèÂà§Êñ≠Êó†ÊâÄË∞ì
 	if (DoHZBOcclusion() && ViewState && ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter)/* && ViewState->HZBOcclusionTests.GetNum() != 0*/) {
 		//Hiz generator
-		//{
-		//	FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
-		//	RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, SceneContext.GetSceneColorSurface());
+		{
+			FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
+			RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, SceneContext.GetSceneColorSurface());
 
-		//	FMobileSceneTextures HZBParameter;
-		//	FRDGBuilder GraphBuilder(RHICmdList);
-		//	SetupMobileHZBParameters(GraphBuilder, &HZBParameter);
-		//	MobileBuildHZB(GraphBuilder, HZBParameter, Views[0]);
-		//	GraphBuilder.Execute();
-		//}
+			FMobileSceneTextures HZBParameter;
+			FRDGBuilder GraphBuilder(RHICmdList);
+			SetupMobileHZBParameters(GraphBuilder, &HZBParameter);
+			MobileBuildHZB(GraphBuilder, HZBParameter, Views[0]);
+			GraphBuilder.Execute();
+		}
 
 		//Issuse Hiz Occlusion Query
 		{
 			ViewState->HZBOcclusionTests.MobileSubmit(RHICmdList, Views[0]);
 		}
 
-		//Flush Command,»∑±£µ±«∞÷°µƒ±ª÷¥––µΩ∂¯≤ª «µΩœ¬“ª÷°“ª∆÷¥––
+		//Flush Command,Â∞ΩÂèØËÉΩÊó©Âú∞ÊâßË°åcopyÂëΩ‰ª§.
 		// Hint to the RHI to submit commands up to this point to the GPU if possible.  Can help avoid CPU stalls next frame waiting
 		// for these query results on some platforms.
 		{
 			RHICmdList.SubmitCommandsHint();
 		}
 	}
-
-
-
-
-	//	if (bHZBOcclusion && ViewState && ViewState->HZBOcclusionTests.GetNum() != 0)
-	//	{
-	//		check(ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter));
-
-	//		SCOPED_DRAW_EVENT(RHICmdList, HZB);
-	//		ViewState->HZBOcclusionTests.Submit(RHICmdList, View);
-	//	}
-	//}
-
-	////async ssao only requires HZB and depth as inputs so get started ASAP
-	//if (CanOverlayRayTracingOutput(Views[0]) && GCompositionLighting.CanProcessAsyncSSAO(Views))
-	//{
-	//	GCompositionLighting.ProcessAsyncSSAO(RHICmdList, Views);
-	//}
-
-	//return bHZBOcclusion;
 }
