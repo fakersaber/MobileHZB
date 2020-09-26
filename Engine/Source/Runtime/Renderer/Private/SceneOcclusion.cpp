@@ -69,6 +69,16 @@ static TAutoConsoleVariable<int32> CVarMobileAllowSoftwareOcclusion(
 	ECVF_RenderThreadSafe
 	);
 
+//Yjh Created By 2020-9-26
+static TAutoConsoleVariable<int32> CVarMobileHZBStagingBaffuerEnable(
+	TEXT("r.Mobile.HZBStagingBaffuer"),
+	1,
+	TEXT("Whether to allow use StagingBuffer for HZB of mobile.\n"),
+	ECVF_RenderThreadSafe
+);
+//End
+
+
 /** Random table for occlusion **/
 FOcclusionRandomStream GOcclusionRandomStream;
 
@@ -665,7 +675,7 @@ static void ExecutePlanarReflectionOcclusionQuery(FRHICommandList& RHICmdList, u
 FHZBOcclusionTester::FHZBOcclusionTester()
 	: ResultsBuffer( NULL )
 {
-#if 1
+#if 0
 	MobileValidFrameNumbers[0] = InvalidFrameNumber;
 	MobileValidFrameNumbers[1] = InvalidFrameNumber;
 #else
@@ -675,7 +685,7 @@ FHZBOcclusionTester::FHZBOcclusionTester()
 
 bool FHZBOcclusionTester::IsValidFrame(uint32 FrameNumber) const
 {
-#if 1
+#if 0
 	return (FrameNumber & FrameNumberMask) == MobileValidFrameNumbers[FrameNumber & 0x1];
 #else
 	return (FrameNumber & FrameNumberMask) == ValidFrameNumber;
@@ -684,7 +694,7 @@ bool FHZBOcclusionTester::IsValidFrame(uint32 FrameNumber) const
 
 void FHZBOcclusionTester::SetValidFrameNumber(uint32 FrameNumber)
 {
-#if 1
+#if 0
 	MobileValidFrameNumbers[FrameNumber & 0x1] = FrameNumber & FrameNumberMask;
 	checkSlow(!IsInvalidFrame(FrameNumber));
 #else
@@ -695,7 +705,7 @@ void FHZBOcclusionTester::SetValidFrameNumber(uint32 FrameNumber)
 
 bool FHZBOcclusionTester::IsInvalidFrame(uint32 FrameNumber) const
 {
-#if 1
+#if 0
 	return MobileValidFrameNumbers[FrameNumber & 0x1] == InvalidFrameNumber;
 #else
 	return ValidFrameNumber == InvalidFrameNumber;
@@ -704,7 +714,7 @@ bool FHZBOcclusionTester::IsInvalidFrame(uint32 FrameNumber) const
 
 void FHZBOcclusionTester::SetInvalidFrameNumber(uint32 FrameNumber)
 {
-#if 1
+#if 0
 	MobileValidFrameNumbers[FrameNumber & 0x1] = InvalidFrameNumber;
 #else
 	// this number cannot be set by SetValidFrameNumber()
@@ -715,7 +725,7 @@ void FHZBOcclusionTester::SetInvalidFrameNumber(uint32 FrameNumber)
 
 void FHZBOcclusionTester::InitDynamicRHI()
 {
-#if 1
+#if 0
 	if (GetFeatureLevel() == ERHIFeatureLevel::ES3_1)
 	{
 		FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
@@ -726,29 +736,29 @@ void FHZBOcclusionTester::InitDynamicRHI()
 		MobileFence[1] = RHICreateGPUFence(TEXT("HZBGPUFence1"));
 	}
 #else
-	if (GetFeatureLevel() >= ERHIFeatureLevel::SM5)
-	{
+	//if (GetFeatureLevel() >= ERHIFeatureLevel::SM5)
+	//{
 		FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
 		FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(SizeX, SizeY), PF_B8G8R8A8, FClearValueBinding::None, TexCreate_CPUReadback | TexCreate_HideInVisualizeTexture, TexCreate_None, false));
 		GRenderTargetPool.FindFreeElement(RHICmdList, Desc, ResultsTextureCPU, TEXT("HZBResultsCPU"), true, ERenderTargetTransience::NonTransient);
 		Fence = RHICreateGPUFence(TEXT("HZBGPUFence"));
-	}
+	//}
 #endif
 }
 
 void FHZBOcclusionTester::ReleaseDynamicRHI()
 {
-#if 1
+#if 0
 	GRenderTargetPool.FreeUnusedResource(MobileResultsTextureCPU[0]);
 	GRenderTargetPool.FreeUnusedResource(MobileResultsTextureCPU[1]);
 	MobileFence[0].SafeRelease();
 	MobileFence[1].SafeRelease();
 #else
-	if (GetFeatureLevel() >= ERHIFeatureLevel::SM5)
-	{
+	//if (GetFeatureLevel() >= ERHIFeatureLevel::SM5)
+	//{
 		GRenderTargetPool.FreeUnusedResource(ResultsTextureCPU);
 		Fence.SafeRelease();
-}
+	//}
 #endif
 }
 
@@ -773,16 +783,19 @@ void FHZBOcclusionTester::MapResults(FRHICommandListImmediate& RHICmdList, uint3
 		int32 Width = 0;
 		int32 Height = 0;
 
-		//UE_LOG(LogTemp, Log, TEXT("GetFence: %d"), FrameNumber & 0x1);
+		if (CVarMobileHZBStagingBaffuerEnable.GetValueOnRenderThread() == 1) {
+#if 0
+		RHICmdList.MapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture, MobileFence[FrameNumber & 0x1].GetReference(), *(void**)&ResultsBuffer, Width, Height);
+#else
+		RHICmdList.MapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, Fence.GetReference(), *(void**)&ResultsBuffer, Width, Height);
+#endif	
+		}
+		else {
+			RHICmdList.ReadSurfaceData(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, FIntRect(0, 0, SizeX, SizeY), TestReadBack, FReadSurfaceDataFlags());
+			ResultsBuffer = (uint8*)TestReadBack.GetData();
+		}
 
-		#if 1
-			RHICmdList.MapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture, MobileFence[FrameNumber & 0x1].GetReference(), *(void**)&ResultsBuffer, Width, Height);
-		#else
-			RHICmdList.MapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, Fence.GetReference(), *(void**)&ResultsBuffer, Width, Height);
-		#endif	
-
-
-		//UE_LOG(LogTemp, Log, TEXT("CurWaitTime: %u"), FPlatformTime::Cycles() - IdleStart);
+		UE_LOG(LogTemp, Log, TEXT("MapResults: %u"), FPlatformTime::Cycles() - IdleStart);
 
 		// RHIMapStagingSurface will block until the results are ready (from the previous frame) so we need to consider this RT idle time
 		GRenderThreadIdle[ERenderThreadIdleTypes::WaitingForGPUQuery] += FPlatformTime::Cycles() - IdleStart;
@@ -804,11 +817,15 @@ void FHZBOcclusionTester::UnmapResults(FRHICommandListImmediate& RHICmdList, uin
 	check( ResultsBuffer );
 	if(!IsInvalidFrame(FrameNumber))
 	{
-		#if 1
+		uint32 IdleStart = FPlatformTime::Cycles();
+		if (CVarMobileHZBStagingBaffuerEnable.GetValueOnRenderThread() == 1) {
+#if 0
 			RHICmdList.UnmapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture);
-		#else
+#else
 			RHICmdList.UnmapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture);
-		#endif
+#endif
+		}
+		//UE_LOG(LogTemp, Log, TEXT("UnmapResults: %u"), FPlatformTime::Cycles() - IdleStart);
 	}
 
 	ResultsBuffer = NULL;
@@ -1111,13 +1128,14 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 	FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(SizeX, SizeY), PF_B8G8R8A8, FClearValueBinding::None, TexCreate_None, TexCreate_RenderTargetable | TexCreate_ShaderResource, false));
 	GRenderTargetPool.FindFreeElement(RHICmdList, Desc, ResultsTextureGPU, TEXT("HZBResultsGPU"));
 
-#if 1
+#if 0
 	uint32 CurFrameIndex = static_cast<FSceneViewState*>(View.State)->OcclusionFrameCounter & 0x1;
 
 	//UE_LOG(LogTemp, Log, TEXT("Submit Index: %d, Submit address %p, CurFrame: %d"), CurFrameIndex, MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture.GetReference(), static_cast<FSceneViewState*>(View.State)->OcclusionFrameCounter);
 
 	RHICmdList.CopyToResolveTarget(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture, FResolveParams());
-	RHICmdList.WriteGPUFence(MobileFence[CurFrameIndex]); //该函数在opengl上会flush command
+	RHICmdList.WriteGPUFence(MobileFence[CurFrameIndex]);
+
 #else
 	RHICmdList.CopyToResolveTarget(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, FResolveParams());
 	RHICmdList.WriteGPUFence(Fence);
