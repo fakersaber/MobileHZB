@@ -72,7 +72,7 @@ static TAutoConsoleVariable<int32> CVarMobileAllowSoftwareOcclusion(
 //Yjh Created By 2020-9-26
 static TAutoConsoleVariable<int32> CVarMobileHZBStagingBaffuerEnable(
 	TEXT("r.Mobile.HZBStagingBaffuer"),
-	1,
+	0,
 	TEXT("Whether to allow use StagingBuffer for HZB of mobile.\n"),
 	ECVF_RenderThreadSafe
 );
@@ -795,7 +795,7 @@ void FHZBOcclusionTester::MapResults(FRHICommandListImmediate& RHICmdList, uint3
 			ResultsBuffer = (uint8*)TestReadBack.GetData();
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("MapResults: %u"), FPlatformTime::Cycles() - IdleStart);
+		//UE_LOG(LogTemp, Log, TEXT("MapResults: %u"), FPlatformTime::Cycles() - IdleStart);
 
 		// RHIMapStagingSurface will block until the results are ready (from the previous frame) so we need to consider this RT idle time
 		GRenderThreadIdle[ERenderThreadIdleTypes::WaitingForGPUQuery] += FPlatformTime::Cycles() - IdleStart;
@@ -837,7 +837,7 @@ bool FHZBOcclusionTester::IsVisible( uint32 Index ) const
 	checkSlow( Index < SizeX * SizeY );
 	
 	// TODO shader compress to bits
-
+	return ResultsBuffer[4 * Index] != 0;
 #if 0
 	return ResultsBuffer[ 4 * Index ] != 0;
 #elif 0
@@ -858,7 +858,12 @@ bool FHZBOcclusionTester::IsVisible( uint32 Index ) const
 
 	const int32 b = Index % (BlockSize * BlockSize);
 	const int32 x = BlockX * BlockSize + b % BlockSize;
-	const int32 y = BlockY * BlockSize + b / BlockSize;
+	int32 y = BlockY * BlockSize + b / BlockSize;
+
+#if PLATFORM_ANDROID
+	//Mobile平台上内存起始位置在左下角
+	y = SizeY - y - 1;
+#endif
 
 	return ResultsBuffer[ 4 * (x + y * SizeY) ] != 0;
 #endif
@@ -1120,28 +1125,232 @@ void FHZBOcclusionTester::Submit(FRHICommandListImmediate& RHICmdList, const FVi
 }
 
 //YJH Created
+//#TODO: use RG?
+class FMobileHZBTestPS : public FGlobalShader
+{
+	DECLARE_SHADER_TYPE(FMobileHZBTestPS, Global);
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return true;
+	}
+
+	FMobileHZBTestPS() {}
+
+public:
+	LAYOUT_FIELD(FShaderParameter, HZBUvFactor)
+		LAYOUT_FIELD(FShaderParameter, HZBSize)
+		LAYOUT_FIELD(FShaderResourceParameter, HZBTexture)
+		LAYOUT_FIELD(FShaderResourceParameter, HZBSampler)
+		LAYOUT_FIELD(FShaderResourceParameter, BoundsCenterTexture)
+		LAYOUT_FIELD(FShaderResourceParameter, BoundsCenterSampler)
+		LAYOUT_FIELD(FShaderResourceParameter, BoundsExtentTexture)
+		LAYOUT_FIELD(FShaderResourceParameter, BoundsExtentSampler)
+
+		FMobileHZBTestPS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
+		: FGlobalShader(Initializer)
+	{
+		HZBUvFactor.Bind(Initializer.ParameterMap, TEXT("HZBUvFactor"));
+		HZBSize.Bind(Initializer.ParameterMap, TEXT("HZBSize"));
+		HZBTexture.Bind(Initializer.ParameterMap, TEXT("HZBTexture"));
+		HZBSampler.Bind(Initializer.ParameterMap, TEXT("HZBSampler"));
+		BoundsCenterTexture.Bind(Initializer.ParameterMap, TEXT("BoundsCenterTexture"));
+		BoundsCenterSampler.Bind(Initializer.ParameterMap, TEXT("BoundsCenterSampler"));
+		BoundsExtentTexture.Bind(Initializer.ParameterMap, TEXT("BoundsExtentTexture"));
+		BoundsExtentSampler.Bind(Initializer.ParameterMap, TEXT("BoundsExtentSampler"));
+	}
+
+	void SetParameters(FRHICommandList& RHICmdList, const FViewInfo& View, FRHITexture* BoundsCenter, FRHITexture* BoundsExtent)
+	{
+		FRHIPixelShader* ShaderRHI = RHICmdList.GetBoundPixelShader();
+
+		FGlobalShader::SetParameters<FViewUniformShaderParameters>(RHICmdList, ShaderRHI, View.ViewUniformBuffer);
+
+		/*
+		 * Defines the maximum number of mipmaps the HZB test is considering
+		 * to avoid memory cache trashing when rendering on high resolution.
+		 */
+		const float kHZBTestMaxMipmap = 9.0f;
+
+		const float HZBMipmapCounts = FMath::Log2(FMath::Max(View.HZBMipmap0Size.X, View.HZBMipmap0Size.Y));
+		const FVector HZBUvFactorValue(
+			float(View.ViewRect.Width()) / float(2 * View.HZBMipmap0Size.X),
+			float(View.ViewRect.Height()) / float(2 * View.HZBMipmap0Size.Y),
+			FMath::Max(HZBMipmapCounts - kHZBTestMaxMipmap, 0.0f)
+		);
+		const FVector4 HZBSizeValue(
+			View.HZBMipmap0Size.X,
+			View.HZBMipmap0Size.Y,
+			1.0f / float(View.HZBMipmap0Size.X),
+			1.0f / float(View.HZBMipmap0Size.Y)
+		);
+		SetShaderValue(RHICmdList, ShaderRHI, HZBUvFactor, HZBUvFactorValue);
+		SetShaderValue(RHICmdList, ShaderRHI, HZBSize, HZBSizeValue);
+
+		SetTextureParameter(RHICmdList, ShaderRHI, HZBTexture, HZBSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), View.HZB->GetRenderTargetItem().ShaderResourceTexture);
+
+		SetTextureParameter(RHICmdList, ShaderRHI, BoundsCenterTexture, BoundsCenterSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), BoundsCenter);
+		SetTextureParameter(RHICmdList, ShaderRHI, BoundsExtentTexture, BoundsExtentSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), BoundsExtent);
+	}
+};
+
+IMPLEMENT_SHADER_TYPE(, FMobileHZBTestPS, TEXT("/Engine/Private/HZBOcclusion.usf"), TEXT("HZBTestPS"), SF_Pixel);
+
+
 void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, const FViewInfo& View) 
 {
 	SCOPED_DRAW_EVENT(RHICmdList, MobileSubmitHZB);
 
-	TRefCountPtr<IPooledRenderTarget> ResultsTextureGPU;
-	FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(SizeX, SizeY), PF_B8G8R8A8, FClearValueBinding::None, TexCreate_None, TexCreate_RenderTargetable | TexCreate_ShaderResource, false));
-	GRenderTargetPool.FindFreeElement(RHICmdList, Desc, ResultsTextureGPU, TEXT("HZBResultsGPU"));
+	FSceneViewState* ViewState = (FSceneViewState*)View.State;
+	if (!ViewState)
+	{
+		return;
+	}
 
-#if 0
-	uint32 CurFrameIndex = static_cast<FSceneViewState*>(View.State)->OcclusionFrameCounter & 0x1;
+	TRefCountPtr< IPooledRenderTarget >	BoundsCenterTexture;
+	TRefCountPtr< IPooledRenderTarget >	BoundsExtentTexture;
+	{
+		uint32 Flags = TexCreate_ShaderResource | TexCreate_Dynamic;
+		FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(SizeX, SizeY), PF_A32B32G32R32F, FClearValueBinding::None, Flags, TexCreate_None, false));
 
-	//UE_LOG(LogTemp, Log, TEXT("Submit Index: %d, Submit address %p, CurFrame: %d"), CurFrameIndex, MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture.GetReference(), static_cast<FSceneViewState*>(View.State)->OcclusionFrameCounter);
-
-	RHICmdList.CopyToResolveTarget(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture, FResolveParams());
-	RHICmdList.WriteGPUFence(MobileFence[CurFrameIndex]);
-
-#else
-	RHICmdList.CopyToResolveTarget(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, FResolveParams());
-	RHICmdList.WriteGPUFence(Fence);
-#endif
+		GRenderTargetPool.FindFreeElement(RHICmdList, Desc, BoundsCenterTexture, TEXT("HZBBoundsCenter"));
+		GRenderTargetPool.FindFreeElement(RHICmdList, Desc, BoundsExtentTexture, TEXT("HZBBoundsExtent"));
 }
 
+	TRefCountPtr< IPooledRenderTarget >	ResultsTextureGPU;
+	{
+		FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(SizeX, SizeY), PF_B8G8R8A8, FClearValueBinding::None, TexCreate_None, TexCreate_ShaderResource | TexCreate_RenderTargetable, false));
+		GRenderTargetPool.FindFreeElement(RHICmdList, Desc, ResultsTextureGPU, TEXT("HZBResultsGPU"));
+	}
+
+	{
+		static float CenterBuffer[SizeX * SizeY][4];
+		static float ExtentBuffer[SizeX * SizeY][4];
+
+		FMemory::Memset(CenterBuffer, 0, sizeof(CenterBuffer));
+		FMemory::Memset(ExtentBuffer, 0, sizeof(ExtentBuffer));
+
+		const uint32 NumPrimitives = Primitives.Num();
+
+		//UE_LOG(LogTemp, Log, TEXT("NumPrimitives: %d"), NumPrimitives);
+
+		for (uint32 i = 0; i < NumPrimitives; i++)
+		{
+			const FOcclusionPrimitive& Primitive = Primitives[i];
+
+			CenterBuffer[i][0] = Primitive.Center.X;
+			CenterBuffer[i][1] = Primitive.Center.Y;
+			CenterBuffer[i][2] = Primitive.Center.Z;
+			CenterBuffer[i][3] = 0.0f;
+
+			ExtentBuffer[i][0] = Primitive.Extent.X;
+			ExtentBuffer[i][1] = Primitive.Extent.Y;
+			ExtentBuffer[i][2] = Primitive.Extent.Z;
+			ExtentBuffer[i][3] = 1.0f;
+		}
+
+		FUpdateTextureRegion2D Region(0, 0, 0, 0, SizeX, SizeY);
+		RHIUpdateTexture2D((FTexture2DRHIRef&)BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture, 0, Region, SizeX * 4 * sizeof(float), (uint8*)CenterBuffer);
+		RHIUpdateTexture2D((FTexture2DRHIRef&)BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture, 0, Region, SizeX * 4 * sizeof(float), (uint8*)ExtentBuffer);
+		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture);
+		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture);
+
+
+
+		// Update in blocks to avoid large update
+		//const uint32 BlockSize = 8;
+		//const uint32 SizeInBlocksX = SizeX / BlockSize;
+		//const uint32 SizeInBlocksY = SizeY / BlockSize;
+		//const uint32 BlockStride = BlockSize * 4 * sizeof(float);
+
+		//float CenterBuffer[BlockSize * BlockSize][4];
+		//float ExtentBuffer[BlockSize * BlockSize][4];
+
+		//const uint32 NumPrimitives = Primitives.Num();
+		//for (uint32 i = 0; i < NumPrimitives; i += BlockSize * BlockSize)
+		//{
+		//	const uint32 BlockEnd = FMath::Min(BlockSize * BlockSize, NumPrimitives - i);
+		//	for (uint32 b = 0; b < BlockEnd; b++)
+		//	{
+		//		const FOcclusionPrimitive& Primitive = Primitives[i + b];
+
+		//		CenterBuffer[b][0] = Primitive.Center.X;
+		//		CenterBuffer[b][1] = Primitive.Center.Y;
+		//		CenterBuffer[b][2] = Primitive.Center.Z;
+		//		CenterBuffer[b][3] = 0.0f;
+
+		//		ExtentBuffer[b][0] = Primitive.Extent.X;
+		//		ExtentBuffer[b][1] = Primitive.Extent.Y;
+		//		ExtentBuffer[b][2] = Primitive.Extent.Z;
+		//		ExtentBuffer[b][3] = 1.0f;
+		//	}
+
+		//	// Clear rest of block
+		//	if (BlockEnd < BlockSize * BlockSize)
+		//	{
+		//		FMemory::Memset((float*)CenterBuffer + BlockEnd * 4, 0, sizeof(CenterBuffer) - BlockEnd * 4 * sizeof(float));
+		//		FMemory::Memset((float*)ExtentBuffer + BlockEnd * 4, 0, sizeof(ExtentBuffer) - BlockEnd * 4 * sizeof(float));
+		//	}
+
+		//	const int32 BlockIndex = i / (BlockSize * BlockSize);
+		//	const int32 BlockX = BlockIndex % SizeInBlocksX;
+		//	const int32 BlockY = BlockIndex / SizeInBlocksY;
+
+		//	FUpdateTextureRegion2D Region(BlockX * BlockSize, BlockY * BlockSize, 0, 0, BlockSize, BlockSize);
+		//	RHIUpdateTexture2D((FTexture2DRHIRef&)BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture, 0, Region, BlockStride, (uint8*)CenterBuffer);
+		//	RHIUpdateTexture2D((FTexture2DRHIRef&)BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture, 0, Region, BlockStride, (uint8*)ExtentBuffer);
+		//}
+		Primitives.Empty();
+	}
+
+	// Draw test
+	{
+		SCOPED_DRAW_EVENT(RHICmdList, TestHZB);
+
+		//不需要Load吧,
+		FRHIRenderPassInfo RPInfo(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ERenderTargetActions::Load_Store);
+		RHICmdList.BeginRenderPass(RPInfo, TEXT("TestHZB"));
+		{
+			FGraphicsPipelineStateInitializer GraphicsPSOInit;
+			RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
+			GraphicsPSOInit.BlendState = TStaticBlendState<>::GetRHI();
+			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
+			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
+
+			TShaderMapRef<FScreenVS>	VertexShader(View.ShaderMap);
+			TShaderMapRef<FMobileHZBTestPS>	PixelShader(View.ShaderMap);
+
+			GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GFilterVertexDeclaration.VertexDeclarationRHI;
+			GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
+			GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
+			GraphicsPSOInit.PrimitiveType = PT_TriangleList;
+
+			SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit);
+
+			PixelShader->SetParameters(RHICmdList, View, BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture, BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture);
+
+			RHICmdList.SetViewport(0, 0, 0.0f, SizeX, SizeY, 1.0f);
+
+			// TODO draw quads covering blocks added above
+			DrawRectangle(
+				RHICmdList,
+				0, 0,
+				SizeX, SizeY,
+				0, 0,
+				SizeX, SizeY,
+				FIntPoint(SizeX, SizeY),
+				FIntPoint(SizeX, SizeY),
+				VertexShader,
+				EDRF_UseTriangleOptimization);
+		}
+		RHICmdList.EndRenderPass();
+	}
+
+	// Transfer memory GPU -> CPU
+	RHICmdList.CopyToResolveTarget(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, FResolveParams());
+	RHICmdList.WriteGPUFence(Fence);
+}
+//YJH End
 
 
 struct FViewOcclusionQueries

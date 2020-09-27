@@ -17,14 +17,26 @@ void HZBBuildPS
 )
 {
     float2 BufferUV = SvPosition.xy * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
-    float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
-	
+    
 #if FDimSceneDepth
+    float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
     float4 SceneDepth = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
-	float FurthestSceneDepth = max(max(SceneDepth.x,SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
+	float FurthestSceneDepth = max(max(SceneDepth.x, SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
 	float FurthestDeviceZ = 1.f / ((FurthestSceneDepth + HZBInvDeviceZToWorldZTransform[3]) * HZBInvDeviceZToWorldZTransform[2]);
 #else
-	float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
+    float2 UV[4];
+    UV[0] = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound);
+    UV[1] = min(BufferUV + float2(0.25f, -0.25f) * InvSize, InputViewportMaxBound);
+    UV[2] = min(BufferUV + float2(-0.25f, 0.25f) * InvSize, InputViewportMaxBound);
+    UV[3] = min(BufferUV + float2(0.25f, 0.25f) * InvSize, InputViewportMaxBound);
+
+    float4 DeviceZ;
+    DeviceZ.x = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[0], 0).r;
+    DeviceZ.y = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[1], 0).r;
+    DeviceZ.z = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[2], 0).r;
+    DeviceZ.w = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[3], 0).r;
+    
+	//float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
 	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
 #endif
     
