@@ -489,7 +489,11 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 
 		const bool bTrueBlit = !SourceTextureRHI->IsMultisampled()
 			&& !DestTextureRHI->IsMultisampled()
-			&& (SourceTextureRHI->GetFormat() == DestTextureRHI->GetFormat()/* || ((DestTextureRHI->GetFlags() & TexCreate_CPUReadback) && !(DestTextureRHI->GetFlags() & (TexCreate_RenderTargetable | TexCreate_DepthStencilTargetable)))*/)
+			&& (SourceTextureRHI->GetFormat() == DestTextureRHI->GetFormat() || 
+				// @StarLight code - BEGIN HZB, Created by yjh
+				((DestTextureRHI->GetFlags() & TexCreate_CPUReadback) && !(DestTextureRHI->GetFlags() & (TexCreate_RenderTargetable | TexCreate_DepthStencilTargetable)))
+				// @StarLight code - End HZB, Created by yjh
+				)
 			&& SrcRect.Size() == DestRect.Size()
 			&& SrcRect.Width() > 0
 			&& SrcRect.Height() > 0
@@ -570,15 +574,13 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 		bool bLockableTarget = DestTextureRHI->GetTexture2D() && (DestTextureRHI->GetFlags() & TexCreate_CPUReadback) && !(DestTextureRHI->GetFlags() & (TexCreate_RenderTargetable | TexCreate_DepthStencilTargetable)) && !DestTextureRHI->IsMultisampled();
 		if(bLockableTarget && FOpenGL::SupportsPixelBuffers() && !ResolveParams.Rect.IsValid())
 		{
-#if 1		
-			//UE_LOG(LogTemp, Log, TEXT("bLockableTarget: %d, SupportsPixelBuffers: %d"), bLockableTarget, FOpenGL::SupportsPixelBuffers());
+#if PLATFORM_ANDROID		
 			check(FOpenGL::SupportsPixelBuffers());
 			FOpenGLTexture2D* DestTex = (FOpenGLTexture2D*)DestTexture;
 			GLuint DesFBO = GetOpenGLFramebuffer(1, &DestTexture, &DestIndex, &MipmapLevel, NULL); 
 			TRefCountPtr<FOpenGLPixelBuffer>& PixelBuffer = DestTex->GetPixelBuffers()[SrcIndex];
 
 			EPixelFormat PixelFormat = DestTex->GetFormat();
-			//除了遮挡回读其他全部check,否则必须像ReadSurfaceDataRaw对所有格式做处理
 			check(PF_B8G8R8A8 == PixelFormat);
 
 			const uint32 BlockBytes = GPixelFormats[PixelFormat].BlockBytes;
@@ -592,15 +594,10 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 
 			glBindFramebuffer(UGL_READ_FRAMEBUFFER, DesFBO);
 			FOpenGL::ReadBuffer(GL_COLOR_ATTACHMENT0);
-
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, PixelBuffer->Resource);
 			glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-			//uint32 IdleStart = FPlatformTime::Cycles();
-
 			glReadPixels(0, 0, MipSizeX, MipSizeY, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-			//UE_LOG(LogTemp, Log, TEXT("glReadPixels: %u"), FPlatformTime::Cycles() - IdleStart);
 
 			glPixelStorei(GL_PACK_ALIGNMENT, 4);
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);

@@ -28,26 +28,13 @@ void HZBBuildPS
 	
 	float4 DeviceZ;
 	const uint2 PixelCoord = floor(SvPosition.xy) * 2;
-	DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
-	DeviceZ.y = ParentTextureMip.Load(int3(PixelCoord + int2(0, 1), 0));
-	DeviceZ.z = ParentTextureMip.Load(int3(PixelCoord + int2(1, 0), 0));
-	DeviceZ.w = ParentTextureMip.Load(int3(PixelCoord + int2(1, 1), 0));
+    DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
+    DeviceZ.y = ParentTextureMip.Load(int3(PixelCoord + int2(0, 1), 0));
+    DeviceZ.z = ParentTextureMip.Load(int3(PixelCoord + int2(1, 0), 0));
+    DeviceZ.w = ParentTextureMip.Load(int3(PixelCoord + int2(1, 1), 0));
 	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-	
-	
- //   float2 UV[4];
- //   UV[0] = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound);
- //   UV[1] = min(BufferUV + float2(0.25f, -0.25f) * InvSize, InputViewportMaxBound);
- //   UV[2] = min(BufferUV + float2(-0.25f, 0.25f) * InvSize, InputViewportMaxBound);
- //   UV[3] = min(BufferUV + float2(0.25f, 0.25f) * InvSize, InputViewportMaxBound);
-
- //   float4 DeviceZ;
- //   DeviceZ.x = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[0], 0).r;
- //   DeviceZ.y = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[1], 0).r;
- //   DeviceZ.z = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[2], 0).r;
- //   DeviceZ.w = ParentTextureMip.SampleLevel(ParentTextureMipSampler, UV[3], 0).r;
-    
-	////float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
+	  
+	//float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
 	//float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
 #endif
 	

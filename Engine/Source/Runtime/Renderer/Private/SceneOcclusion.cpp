@@ -24,6 +24,7 @@
 -----------------------------------------------------------------------------*/
 
 TArray<FColor> TestReadBack;
+static uint8 TestFrameBuffer[] = { 255 };
 
 
 //Created by YJH 2020-9-21
@@ -72,7 +73,7 @@ static TAutoConsoleVariable<int32> CVarMobileAllowSoftwareOcclusion(
 //Yjh Created By 2020-9-26
 static TAutoConsoleVariable<int32> CVarMobileHZBStagingBaffuerEnable(
 	TEXT("r.Mobile.HZBStagingBaffuer"),
-	0,
+	1,
 	TEXT("Whether to allow use StagingBuffer for HZB of mobile.\n"),
 	ECVF_RenderThreadSafe
 );
@@ -778,24 +779,30 @@ void FHZBOcclusionTester::MapResults(FRHICommandListImmediate& RHICmdList, uint3
 	if (!IsInvalidFrame(FrameNumber) )
 	{
 		SCOPE_CYCLE_COUNTER(STAT_MapHZBResults);
+
+		static uint8 FirstFrameBuffer[] = { 255 };
+		ResultsBuffer = FirstFrameBuffer;
+
 		uint32 IdleStart = FPlatformTime::Cycles();
 
 		int32 Width = 0;
 		int32 Height = 0;
 
+		RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
+		UE_LOG(LogTemp, Log, TEXT("MapResults: %u"), FPlatformTime::Cycles() - IdleStart);
+
+
 		if (CVarMobileHZBStagingBaffuerEnable.GetValueOnRenderThread() == 1) {
 #if 0
-		RHICmdList.MapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture, MobileFence[FrameNumber & 0x1].GetReference(), *(void**)&ResultsBuffer, Width, Height);
+			RHICmdList.MapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture, MobileFence[FrameNumber & 0x1].GetReference(), *(void**)&ResultsBuffer, Width, Height);
 #else
-		RHICmdList.MapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, Fence.GetReference(), *(void**)&ResultsBuffer, Width, Height);
+			RHICmdList.MapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, Fence.GetReference(), *(void**)&ResultsBuffer, Width, Height);
 #endif	
 		}
 		else {
 			RHICmdList.ReadSurfaceData(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, FIntRect(0, 0, SizeX, SizeY), TestReadBack, FReadSurfaceDataFlags());
 			ResultsBuffer = (uint8*)TestReadBack.GetData();
 		}
-
-		//UE_LOG(LogTemp, Log, TEXT("MapResults: %u"), FPlatformTime::Cycles() - IdleStart);
 
 		// RHIMapStagingSurface will block until the results are ready (from the previous frame) so we need to consider this RT idle time
 		GRenderThreadIdle[ERenderThreadIdleTypes::WaitingForGPUQuery] += FPlatformTime::Cycles() - IdleStart;
@@ -815,9 +822,8 @@ void FHZBOcclusionTester::MapResults(FRHICommandListImmediate& RHICmdList, uint3
 void FHZBOcclusionTester::UnmapResults(FRHICommandListImmediate& RHICmdList, uint32 FrameNumber)
 {
 	check( ResultsBuffer );
-	if(!IsInvalidFrame(FrameNumber))
+	if (!IsInvalidFrame(FrameNumber))
 	{
-		uint32 IdleStart = FPlatformTime::Cycles();
 		if (CVarMobileHZBStagingBaffuerEnable.GetValueOnRenderThread() == 1) {
 #if 0
 			RHICmdList.UnmapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture);
@@ -825,7 +831,6 @@ void FHZBOcclusionTester::UnmapResults(FRHICommandListImmediate& RHICmdList, uin
 			RHICmdList.UnmapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture);
 #endif
 		}
-		//UE_LOG(LogTemp, Log, TEXT("UnmapResults: %u"), FPlatformTime::Cycles() - IdleStart);
 	}
 
 	ResultsBuffer = NULL;
@@ -837,6 +842,12 @@ bool FHZBOcclusionTester::IsVisible( uint32 Index ) const
 	checkSlow( Index < SizeX * SizeY );
 	
 	// TODO shader compress to bits
+#if PLATFORM_ANDROID
+	const int32 TempRow = Index / SizeX;
+	const int32 CurX = Index - TempRow * SizeX;
+	const int32 CurIndex = (SizeY - 1 - TempRow) * SizeX + CurX;
+	return TestFrameBuffer[4 * CurIndex] != 0;
+#endif
 	return ResultsBuffer[4 * Index] != 0;
 #if 0
 	return ResultsBuffer[ 4 * Index ] != 0;
@@ -1252,9 +1263,6 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 		FUpdateTextureRegion2D Region(0, 0, 0, 0, SizeX, SizeY);
 		RHIUpdateTexture2D((FTexture2DRHIRef&)BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture, 0, Region, SizeX * 4 * sizeof(float), (uint8*)CenterBuffer);
 		RHIUpdateTexture2D((FTexture2DRHIRef&)BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture, 0, Region, SizeX * 4 * sizeof(float), (uint8*)ExtentBuffer);
-		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture);
-		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture);
-
 
 
 		// Update in blocks to avoid large update
@@ -1306,6 +1314,9 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 	// Draw test
 	{
 		SCOPED_DRAW_EVENT(RHICmdList, TestHZB);
+
+		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture);
+		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture);
 
 		//²»ÐèÒªLoad°É,
 		FRHIRenderPassInfo RPInfo(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ERenderTargetActions::Load_Store);

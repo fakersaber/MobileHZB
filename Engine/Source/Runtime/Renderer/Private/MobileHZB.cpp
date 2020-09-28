@@ -6,7 +6,7 @@
 
 
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileSceneTextures, )
-//Mobile上SceneDepth是不会写出的, 所以使用SceneColor
+
 SHADER_PARAMETER_RDG_TEXTURE(Texture2D, MobileSceneColorBuffer)
 
 END_SHADER_PARAMETER_STRUCT()
@@ -20,7 +20,6 @@ SHADER_PARAMETER(FVector2D, InvSize)
 SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, ParentTextureMip)
 SHADER_PARAMETER_SAMPLER(SamplerState, ParentTextureMipSampler)
 
-//SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 END_SHADER_PARAMETER_STRUCT()
 
 
@@ -43,10 +42,6 @@ class FMobileHZBBuildPS : public FGlobalShader
 		return true;
 	}
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		OutEnvironment.SetRenderTargetOutputFormat(0, PF_R32_FLOAT);
-	}
 };
 IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildPS, "/Engine/Private/MobileHZB.usf", "HZBBuildPS", SF_Pixel);
 
@@ -96,7 +91,7 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 		ShaderParameters.HZBInvDeviceZToWorldZTransform = View.InvDeviceZToWorldZTransform;
 		ShaderParameters.ParentTextureMip = ParentTextureMip;
 		ShaderParameters.ParentTextureMipSampler = TStaticSamplerState<SF_Point>::GetRHI();
-		//ShaderParameters.View = View.ViewUniformBuffer;
+
 
 		FIntPoint DstSize = FIntPoint::DivideAndRoundUp(HZBSize, 1 << StartDestMip);
 
@@ -139,7 +134,6 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 		}
 		else
 		{
-
 			FMobileHZBBuildPS::FParameters* PassParameters = GraphBuilder.AllocParameters<FMobileHZBBuildPS::FParameters>();
 			PassParameters->Shared = ShaderParameters;
 			PassParameters->RenderTargets[0] = FRenderTargetBinding(FurthestHZBTexture, ERenderTargetLoadAction::ENoAction, StartDestMip);

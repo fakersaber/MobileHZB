@@ -198,16 +198,15 @@ void HZBTestPS(float2 InUV : TEXCOORD0, out float4 OutColor : SV_Target0)
 	{
 		// TODO could vectorize this
 		float4 Depth;
-        Depth.x = HZBTexture.SampleLevel(HZBSampler, float2(i, 0) * Scale + Bias, 6).r;
-        Depth.y = HZBTexture.SampleLevel(HZBSampler, float2(i, 1) * Scale + Bias, 6).r;
-        Depth.z = HZBTexture.SampleLevel(HZBSampler, float2(i, 2) * Scale + Bias, 6).r;
-        Depth.w = HZBTexture.SampleLevel(HZBSampler, float2(i, 3) * Scale + Bias, 6).r;
+		Depth.x = HZBTexture.SampleLevel( HZBSampler, float2( i, 0 ) * Scale + Bias, Level ).r;
+		Depth.y = HZBTexture.SampleLevel( HZBSampler, float2( i, 1 ) * Scale + Bias, Level ).r;
+		Depth.z = HZBTexture.SampleLevel( HZBSampler, float2( i, 2 ) * Scale + Bias, Level ).r;
+		Depth.w = HZBTexture.SampleLevel( HZBSampler, float2( i, 3 ) * Scale + Bias, Level ).r;
 		MinDepth = min( MinDepth, Depth );
 	}
 	MinDepth.x = min( min(MinDepth.x, MinDepth.y), min(MinDepth.z, MinDepth.w) );
 
 	// Inverted Z buffer
-    OutColor = float4(HZBTexture.SampleLevel(HZBSampler, Bias, 6).r, Bias.xyx); //直接采样
-	//OutColor = RectMax.z >= MinDepth.x ? 1 : 0;
+	OutColor = RectMax.z >= MinDepth.x ? 1 : 0;
 #endif
 }

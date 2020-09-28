@@ -853,12 +853,12 @@ void* TOpenGLTexture<RHIResourceType>::Lock(uint32 InMipIndex,uint32 ArrayIndex,
 		{
 			Resolve(InMipIndex, ArrayIndex);
 		}
+
 		uint32 IdleStart = FPlatformTime::Cycles();
-
 		result = PixelBuffer->Lock(0, PixelBuffer->GetSize(), LockMode == RLM_ReadOnly, LockMode != RLM_ReadOnly);
-
-		UE_LOG(LogTemp, Log, TEXT("MapBufferRange: %u, LockMode: %d"), FPlatformTime::Cycles() - IdleStart, LockMode);
-		
+		if (LockMode == RLM_ReadOnly) {
+			UE_LOG(LogTemp, Log, TEXT("Lock: %u"), FPlatformTime::Cycles() - IdleStart);
+		}
 	}
 	else
 	{
