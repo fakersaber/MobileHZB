@@ -1070,8 +1070,8 @@ static void FetchVisibilityForPrimitives_Range(FVisForPrimParams& Params, FGloba
 							// Always run
 							if (bSingleThreaded)
 							{								
-								//²âÊÔ»Ø¶Á£¬ÏÈ×¢ÊÍ
-								//PrimitiveOcclusionHistory->HZBTestIndex = HZBOcclusionTests.AddBounds(OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
+								//æµ‹è¯•å›žè¯»ï¼Œå…ˆæ³¨é‡Š
+								PrimitiveOcclusionHistory->HZBTestIndex = HZBOcclusionTests.AddBounds(OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
 							}
 							else
 							{
