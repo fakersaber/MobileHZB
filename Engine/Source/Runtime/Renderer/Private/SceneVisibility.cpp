@@ -916,11 +916,13 @@ static void FetchVisibilityForPrimitives_Range(FVisForPrimParams& Params, FGloba
 				{
 					if (bHZBOcclusion)
 					{
-						if (HZBOcclusionTests.IsValidFrame(PrimitiveOcclusionHistory->LastTestFrameNumber))
+						//YJH Created By 2020-9-29
+						if (HZBOcclusionTests.IsValidFrame(PrimitiveOcclusionHistory->LastTestFrameNumber[OcclusionFrameCounter & 0x1u]))
 						{
-							bIsOccluded = !HZBOcclusionTests.IsVisible(PrimitiveOcclusionHistory->HZBTestIndex);
+							bIsOccluded = !HZBOcclusionTests.IsVisible(PrimitiveOcclusionHistory->HZBTestIndex[OcclusionFrameCounter & 0x1u]);
 							bOcclusionStateIsDefinite = true;
 						}
+						//Yjh End
 					}
 					else
 					{
@@ -1064,14 +1066,13 @@ static void FetchVisibilityForPrimitives_Range(FVisForPrimParams& Params, FGloba
 
 					if (bAllowBoundsTest)
 					{
-						PrimitiveOcclusionHistory->LastTestFrameNumber = OcclusionFrameCounter;
+						PrimitiveOcclusionHistory->LastTestFrameNumber[OcclusionFrameCounter & 0x1u] = OcclusionFrameCounter;
 						if (bHZBOcclusion)
 						{
 							// Always run
 							if (bSingleThreaded)
 							{								
-								//娴嬭瘯鍥炶锛屽厛娉ㄩ噴
-								PrimitiveOcclusionHistory->HZBTestIndex = HZBOcclusionTests.AddBounds(OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
+								PrimitiveOcclusionHistory->HZBTestIndex[OcclusionFrameCounter & 0x1u] = HZBOcclusionTests.AddBounds(OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
 							}
 							else
 							{
@@ -1412,7 +1413,8 @@ static int32 FetchVisibilityForPrimitives(const FScene* Scene, FViewInfo& View, 
 				//HZB output
 				for (auto HZBBoundIter = OutHZBBounds[i].CreateIterator(); HZBBoundIter; ++HZBBoundIter)
 				{
-					HZBBoundIter->TargetHistory->HZBTestIndex = HZBOcclusionTests.AddBounds(HZBBoundIter->BoundsOrigin, HZBBoundIter->BoundsExtent);
+					//YJH Created By 2020-9-29
+					HZBBoundIter->TargetHistory->HZBTestIndex[OcclusionFrameCounter & 0x1u] = HZBOcclusionTests.AddBounds(HZBBoundIter->BoundsOrigin, HZBBoundIter->BoundsExtent);
 				}
 
 				//Manual query release handling
@@ -1629,6 +1631,7 @@ static int32 OcclusionCull(FRHICommandListImmediate& RHICmdList, const FScene* S
 
 			if( bHZBOcclusion )
 			{			
+				//check一当前一定不为
 				check(!ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter));
 			#if 1
 				ViewState->HZBOcclusionTests.MapResults(RHICmdList, ViewState->OcclusionFrameCounter);

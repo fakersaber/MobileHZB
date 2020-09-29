@@ -152,7 +152,8 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 				[PassParameters, &View, PixelShader, DstSize](FRHICommandList& RHICmdList)
 				{
 					FPixelShaderUtils::DrawFullscreenPixelShader(RHICmdList, View.ShaderMap, PixelShader, *PassParameters, FIntRect(0, 0, DstSize.X, DstSize.Y));
-				});
+				}
+			);
 		}
 	};
 
@@ -207,7 +208,6 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 
 	FSceneViewState* ViewState = (FSceneViewState*)Views[0].State;
 
-	//存在线程写入值时其他错误,其实有数量判断无所谓
 	if (DoHZBOcclusion() && ViewState && ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter)/* && ViewState->HZBOcclusionTests.GetNum() != 0*/) {
 		//Hiz generator
 		{
@@ -231,6 +231,7 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 		// for these query results on some platforms.
 		{
 			RHICmdList.SubmitCommandsHint();
+			RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 		}
 	}
 }

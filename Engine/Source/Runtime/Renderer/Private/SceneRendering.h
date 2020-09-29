@@ -408,14 +408,17 @@ public:
 
 	void SetValidFrameNumber(uint32 FrameNumber);
 
+	//YJH Created by 2020-9-23
+	enum { MobileFenceNum = 2 };
+	//END
+
+
 private:
 	enum { SizeX = 256 };
 	enum { SizeY = 256 };
 	enum { FrameNumberMask = 0x7fffffff };
 	enum { InvalidFrameNumber = 0xffffffff };	
-	//YJH Created by 2020-9-23
-	enum { MobileFenceNum = 2 };
-	//END
+
 
 	TArray< FOcclusionPrimitive, SceneRenderingAllocator >	Primitives;
 
