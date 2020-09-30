@@ -498,6 +498,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 		QUICK_SCOPE_CYCLE_COUNTER(STAT_FMobileSceneRenderer_PostInitViewsFlushDel);
 		// we will probably stall on occlusion queries, so might as well have the RHI thread and GPU work while we wait.
 		// Also when doing RHI thread this is the only spot that will process pending deletes
+
 		FRHICommandListExecutor::GetImmediateCommandList().PollOcclusionQueries();
 		FRHICommandListExecutor::GetImmediateCommandList().ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResources);
 	}
@@ -763,7 +764,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 		RHICmdList.SubmitCommandsHint();
 		bSubmitOffscreenRendering = false; // submit once
 		// Issue occlusion queries
-	    RenderOcclusion(RHICmdList);
+		RenderOcclusion(RHICmdList);
 	    RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 	}
 
@@ -777,7 +778,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	RHICmdList.EndRenderPass();
 
 	//YJH Created By 2020-9-25
-	//MobileRenderHZB(RHICmdList);
+	MobileRenderHZB(RHICmdList);
 	//YJH End
 
 
@@ -948,8 +949,6 @@ void FMobileSceneRenderer::RenderOcclusion(FRHICommandListImmediate& RHICmdList)
 	{
 		return;
 	}
-
-	MobileRenderHZB(RHICmdList);
 
 	BeginOcclusionTests(RHICmdList, true);
 	FenceOcclusionTests(RHICmdList);

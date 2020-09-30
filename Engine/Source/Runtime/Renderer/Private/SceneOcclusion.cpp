@@ -772,6 +772,12 @@ uint32 FHZBOcclusionTester::AddBounds( const FVector& BoundsCenter, const FVecto
 	return Index;
 }
 
+
+static void TestTaskGraphFunc(FRHITexture* Texture, void*& OutData) {
+
+}
+
+
 void FHZBOcclusionTester::MapResults(FRHICommandListImmediate& RHICmdList, uint32 FrameNumber)
 {
 	check( !ResultsBuffer );
@@ -792,6 +798,10 @@ void FHZBOcclusionTester::MapResults(FRHICommandListImmediate& RHICmdList, uint3
 			RHICmdList.MapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture, Fence.GetReference(), *(void**)&ResultsBuffer, Width, Height);
 #endif	
 		}
+		else if (CVarMobileHZBStagingBaffuerEnable.GetValueOnRenderThread() == 2) {
+			GDynamicRHI->RHIMapStagingSurfaceNoFlush(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture, *(void**)&ResultsBuffer);
+		}
+
 		else {
 			RHICmdList.ReadSurfaceData(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture, FIntRect(0, 0, SizeX, SizeY), TestReadBack, FReadSurfaceDataFlags());
 			ResultsBuffer = (uint8*)TestReadBack.GetData();
@@ -823,6 +833,9 @@ void FHZBOcclusionTester::UnmapResults(FRHICommandListImmediate& RHICmdList, uin
 #else
 			RHICmdList.UnmapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture);
 #endif
+		}
+		else if(CVarMobileHZBStagingBaffuerEnable.GetValueOnRenderThread() == 2){
+			GDynamicRHI->RHIUnMapStagingSurfaceNoFlush(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture);
 		}
 	}
 
@@ -1118,7 +1131,6 @@ void FHZBOcclusionTester::Submit(FRHICommandListImmediate& RHICmdList, const FVi
 }
 
 //YJH Created
-//#TODO: use RG?
 class FMobileHZBTestPS : public FGlobalShader
 {
 	DECLARE_SHADER_TYPE(FMobileHZBTestPS, Global);
@@ -1298,7 +1310,6 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsCenterTexture->GetRenderTargetItem().ShaderResourceTexture);
 		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, BoundsExtentTexture->GetRenderTargetItem().ShaderResourceTexture);
 
-		//²»ÐèÒªLoad°É,
 		FRHIRenderPassInfo RPInfo(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ERenderTargetActions::DontLoad_Store);
 		RHICmdList.BeginRenderPass(RPInfo, TEXT("TestHZB"));
 		{

@@ -1006,6 +1006,43 @@ void FOpenGLDynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFen
 	RHITHREAD_GLCOMMAND_EPILOGUE();
 }
 
+//YJH Created By 2020-9-30
+void FOpenGLDynamicRHI::RHIMapStagingSurfaceNoFlush(FRHITexture* TextureRHI, void*& OutData) {
+	check(IsInRenderingThread() && IsRunningRHIInSeparateThread() && IsRunningRHIInDedicatedThread());
+
+	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
+
+	ALLOC_COMMAND_CL(RHICmdList, FRHICommandGLCommand)([&]() {
+			FOpenGLTexture2D* Texture2D = (FOpenGLTexture2D*)TextureRHI->GetTexture2D();
+			check(Texture2D);
+			check(Texture2D->IsStaging());
+
+			uint32 Stride = 0;
+			OutData = Texture2D->Lock(0, 0, RLM_ReadOnly, Stride);
+		}
+	);
+	FGraphEventRef Done = RHICmdList.RHIThreadFence(false);
+	RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
+	FRHICommandListExecutor::WaitOnRHIThreadFence(Done);
+}
+
+
+void FOpenGLDynamicRHI::RHIUnMapStagingSurfaceNoFlush(FRHITexture* TextureRHI) {
+	check(IsInRenderingThread() && IsRunningRHIInSeparateThread() && IsRunningRHIInDedicatedThread());
+
+	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
+	ALLOC_COMMAND_CL(RHICmdList, FRHICommandGLCommand)([&]() {
+			FOpenGLTexture2D* Texture2D = (FOpenGLTexture2D*)TextureRHI->GetTexture2D();
+			check(Texture2D);
+			Texture2D->Unlock(0, 0);
+		}
+	);
+	FGraphEventRef Done = RHICmdList.RHIThreadFence(false);
+	RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
+	FRHICommandListExecutor::WaitOnRHIThreadFence(Done);
+}
+
+
 void FOpenGLDynamicRHI::RHIUnmapStagingSurface(FRHITexture* TextureRHI, uint32 GPUIndex)
 {
 	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();

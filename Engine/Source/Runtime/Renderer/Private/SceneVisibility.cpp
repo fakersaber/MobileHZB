@@ -1630,12 +1630,11 @@ static int32 OcclusionCull(FRHICommandListImmediate& RHICmdList, const FScene* S
 #endif
 
 			if( bHZBOcclusion )
-			{			
-				//check一当前一定不为
-				check(!ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter));
+			{					
 			#if 1
 				ViewState->HZBOcclusionTests.MapResults(RHICmdList, ViewState->OcclusionFrameCounter);
 			#else
+				check(!ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter));
 				ViewState->HZBOcclusionTests.MapResults(RHICmdList);
 			#endif
 			}
@@ -1663,11 +1662,11 @@ static int32 OcclusionCull(FRHICommandListImmediate& RHICmdList, const FScene* S
 				ViewState->HZBOcclusionTests.UnmapResults(RHICmdList, ViewState->OcclusionFrameCounter);
 			#else
 				ViewState->HZBOcclusionTests.UnmapResults(RHICmdList);
-			#endif
-				if( bSubmitQueries )
+				if (bSubmitQueries)
 				{
 					ViewState->HZBOcclusionTests.SetValidFrameNumber(ViewState->OcclusionFrameCounter);
 				}
+			#endif
 			}
 		}
 		else

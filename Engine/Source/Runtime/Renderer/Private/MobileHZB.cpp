@@ -208,7 +208,7 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 
 	FSceneViewState* ViewState = (FSceneViewState*)Views[0].State;
 
-	if (DoHZBOcclusion() && ViewState && ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter)/* && ViewState->HZBOcclusionTests.GetNum() != 0*/) {
+	if (DoHZBOcclusion() && ViewState && ViewState->HZBOcclusionTests.GetNum() != 0) {
 		//Hiz generator
 		{
 			FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
@@ -224,6 +224,7 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 		//Issuse Hiz Occlusion Query
 		{
 			ViewState->HZBOcclusionTests.MobileSubmit(RHICmdList, Views[0]);
+			ViewState->HZBOcclusionTests.SetValidFrameNumber(ViewState->OcclusionFrameCounter);
 		}
 
 		//Flush Command,尽可能早地执行copy命令.
