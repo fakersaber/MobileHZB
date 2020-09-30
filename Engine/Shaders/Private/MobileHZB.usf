@@ -16,10 +16,8 @@ void HZBBuildPS
     out float4 OutColor : SV_Target0
 )
 {
-
-
-	float2 BufferUV = SvPosition.xy * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
 #if FDimSceneDepth
+	float2 BufferUV = SvPosition.xy * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
     float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
     float4 SceneDepth = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
 	float FurthestSceneDepth = max(max(SceneDepth.x, SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
@@ -38,6 +36,5 @@ void HZBBuildPS
 	//float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
 #endif
 	
-
     OutColor = FurthestDeviceZ;
 }

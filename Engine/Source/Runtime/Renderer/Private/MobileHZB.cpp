@@ -4,6 +4,7 @@
 #include "RenderGraph.h"
 #include "PixelShaderUtils.h"
 
+#define SL_USE_MOBILEHZB 1
 
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileSceneTextures, )
 
@@ -65,7 +66,6 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 		HZBSize = FIntPoint(1 << NumMipsX, 1 << NumMipsY);
 	}
 
-	//#TODO: CS? 
 	constexpr bool bUseCompute = false;
 	int32 MaxMipBatchSize = bUseCompute ? kMaxMipBatchSize : 1;
 
@@ -97,40 +97,7 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 
 		if (bUseCompute)
 		{
-			//int32 EndDestMip = FMath::Min(StartDestMip + kMaxMipBatchSize, NumMips);
-
-			//FHZBBuildCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FHZBBuildCS::FParameters>();
-			//PassParameters->Shared = ShaderParameters;
-
-			//for (int32 DestMip = StartDestMip; DestMip < EndDestMip; DestMip++)
-			//{
-			//	if (bOutputFurthest)
-			//		PassParameters->FurthestHZBOutput[DestMip - StartDestMip] = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(FurthestHZBTexture, DestMip));
-			//	if (bOutputClosest)
-			//		PassParameters->ClosestHZBOutput[DestMip - StartDestMip] = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(ClosestHZBTexture, DestMip));
-			//}
-
-			//FHZBBuildCS::FPermutationDomain PermutationVector;
-			//PermutationVector.Set<FHZBBuildCS::FDimMipLevelCount>(EndDestMip - StartDestMip);
-			//PermutationVector.Set<FHZBBuildCS::FDimFurthest>(bOutputFurthest);
-			//PermutationVector.Set<FHZBBuildCS::FDimClosest>(bOutputClosest);
-
-			//TShaderMapRef<FHZBBuildCS> ComputeShader(View.ShaderMap, PermutationVector);
-
-			//// TODO(RDG): remove ERDGPassFlags::GenerateMips to use FComputeShaderUtils::AddPass().
-			//ClearUnusedGraphResources(ComputeShader, PassParameters);
-			//GraphBuilder.AddPass(
-			//	RDG_EVENT_NAME("ReduceHZB(mips=[%d;%d]%s%s) %dx%d",
-			//		StartDestMip, EndDestMip - 1,
-			//		bOutputClosest ? TEXT(" Closest") : TEXT(""),
-			//		bOutputFurthest ? TEXT(" Furthest") : TEXT(""),
-			//		DstSize.X, DstSize.Y),
-			//	PassParameters,
-			//	StartDestMip ? (ERDGPassFlags::Compute | ERDGPassFlags::GenerateMips) : ERDGPassFlags::Compute,
-			//	[PassParameters, ComputeShader, DstSize](FRHICommandList& RHICmdList)
-			//	{
-			//		FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, *PassParameters, FComputeShaderUtils::GetGroupCount(DstSize, 8));
-			//	});
+			//#TODO, Use CS?
 		}
 		else
 		{
@@ -204,6 +171,8 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 
 void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList) {
 
+#if SL_USE_MOBILEHZB
+
 	SCOPED_DRAW_EVENT(RHICmdList, MobileHZB);
 
 	FSceneViewState* ViewState = (FSceneViewState*)Views[0].State;
@@ -212,8 +181,6 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 		//Hiz generator
 		{
 			FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
-			RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, SceneContext.GetSceneColorSurface());
-
 			FMobileSceneTextures HZBParameter;
 			FRDGBuilder GraphBuilder(RHICmdList);
 			SetupMobileHZBParameters(GraphBuilder, &HZBParameter);
@@ -227,7 +194,6 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 			ViewState->HZBOcclusionTests.SetValidFrameNumber(ViewState->OcclusionFrameCounter);
 		}
 
-		//Flush Command,尽可能早地执行copy命令.
 		// Hint to the RHI to submit commands up to this point to the GPU if possible.  Can help avoid CPU stalls next frame waiting
 		// for these query results on some platforms.
 		{
@@ -235,4 +201,6 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 			RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 		}
 	}
+
+#endif
 }

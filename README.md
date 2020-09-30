@@ -1,3 +1,3 @@
 # MobileHZB
 
-- 完成初版，Adrone上Occlusion Query比较贵优化后提升比较明显，MaliGPU优化掉Occlusion Query后性能提升不明显。
+- 最后结果Adreno系列原生Query很慢都HZB有正优化，Mali系Query很快性能不太敏感提升不明显。因为保守剔除的缘故如果多出来的Primitive超出省下来的性能为负优化

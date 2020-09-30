@@ -53,9 +53,6 @@
 #include "Halton.h"
 #endif
 
-// #change by wh, 2020/7/22
-#include "MobileClusterForwardLighting.h"
-// end
 
 /** Factor by which to grow occlusion tests **/
 #define OCCLUSION_SLOP (1.0f)
@@ -86,6 +83,9 @@ class FRHIGPUTextureReadback;
 class FRuntimeVirtualTextureSceneProxy;
 
 /** Holds information about a single primitive's occlusion. */
+
+#define SL_USE_MOBILEHZB 1
+
 class FPrimitiveOcclusionHistory
 {
 public:
@@ -96,9 +96,17 @@ public:
 	FRefCountedRHIPooledRenderQuery PendingOcclusionQuery[FOcclusionQueryHelpers::MaxBufferedOcclusionFrames];
 	uint32 PendingOcclusionQueryFrames[FOcclusionQueryHelpers::MaxBufferedOcclusionFrames]; 
 
+	// @StarLight code - BEGIN HZB Created By YJH
+#if SL_USE_MOBILEHZB
 	uint32 LastTestFrameNumber[FHZBOcclusionTester::MobileFenceNum];
 	uint32 LastConsideredFrameNumber;
 	uint32 HZBTestIndex[FHZBOcclusionTester::MobileFenceNum];
+#else
+	uint32 LastTestFrameNumber;
+	uint32 LastConsideredFrameNumber;
+	uint32 HZBTestIndex;
+#endif
+	// @StarLight code - END HZB Created By YJH
 
 	/** The last time the primitive was visible. */
 	float LastProvenVisibleTime;

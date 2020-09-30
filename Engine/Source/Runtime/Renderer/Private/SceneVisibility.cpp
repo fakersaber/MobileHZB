@@ -45,6 +45,8 @@
 	Globals
 ------------------------------------------------------------------------------*/
 
+#define SL_USE_MOBILEHZB 1
+
 static float GWireframeCullThreshold = 5.0f;
 static FAutoConsoleVariableRef CVarWireframeCullThreshold(
 	TEXT("r.WireframeCullThreshold"),
@@ -916,13 +918,21 @@ static void FetchVisibilityForPrimitives_Range(FVisForPrimParams& Params, FGloba
 				{
 					if (bHZBOcclusion)
 					{
-						//YJH Created By 2020-9-29
-						if (HZBOcclusionTests.IsValidFrame(PrimitiveOcclusionHistory->LastTestFrameNumber[OcclusionFrameCounter & 0x1u]))
+					// @StarLight code - BEGIN HZB Created By YJH
+					#if SL_USE_MOBILEHZB
+						if (HZBOcclusionTests.IsValidFrame(PrimitiveOcclusionHistory->LastTestFrameNumber[OcclusionFrameCounter & 0x1u])) 
 						{
 							bIsOccluded = !HZBOcclusionTests.IsVisible(PrimitiveOcclusionHistory->HZBTestIndex[OcclusionFrameCounter & 0x1u]);
 							bOcclusionStateIsDefinite = true;
 						}
-						//Yjh End
+					#else
+						if (HZBOcclusionTests.IsValidFrame(PrimitiveOcclusionHistory->LastTestFrameNumber)) 
+						{
+							bIsOccluded = !HZBOcclusionTests.IsVisible(PrimitiveOcclusionHistory->HZBTestIndex);
+							bOcclusionStateIsDefinite = true;
+						}
+					#endif
+					// @StarLight code - BEGIN HZB Created By YJH
 					}
 					else
 					{
@@ -1066,6 +1076,8 @@ static void FetchVisibilityForPrimitives_Range(FVisForPrimParams& Params, FGloba
 
 					if (bAllowBoundsTest)
 					{
+						// @StarLight code - BEGIN HZB Created By YJH
+						#if SL_USE_MOBILEHZB
 						PrimitiveOcclusionHistory->LastTestFrameNumber[OcclusionFrameCounter & 0x1u] = OcclusionFrameCounter;
 						if (bHZBOcclusion)
 						{
@@ -1079,6 +1091,22 @@ static void FetchVisibilityForPrimitives_Range(FVisForPrimParams& Params, FGloba
 								HZBBoundsToAdd->Emplace(PrimitiveOcclusionHistory, OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
 							}
 						}
+						#else
+						PrimitiveOcclusionHistory->LastTestFrameNumber = OcclusionFrameCounter;
+						if (bHZBOcclusion)
+						{
+							// Always run
+							if (bSingleThreaded)
+							{
+								PrimitiveOcclusionHistory->HZBTestIndex = HZBOcclusionTests.AddBounds(OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
+							}
+							else
+							{
+								HZBBoundsToAdd->Emplace(PrimitiveOcclusionHistory, OcclusionBounds.Origin, OcclusionBounds.BoxExtent);
+							}
+						}
+						#endif
+						// @StarLight code - END HZB Created By YJH
 						else
 						{
 							// decide if a query should be run this frame
@@ -1413,8 +1441,12 @@ static int32 FetchVisibilityForPrimitives(const FScene* Scene, FViewInfo& View, 
 				//HZB output
 				for (auto HZBBoundIter = OutHZBBounds[i].CreateIterator(); HZBBoundIter; ++HZBBoundIter)
 				{
-					//YJH Created By 2020-9-29
+					// @StarLight code - BEGIN HZB Created By YJH
+				#if SL_USE_MOBILEHZB
 					HZBBoundIter->TargetHistory->HZBTestIndex[OcclusionFrameCounter & 0x1u] = HZBOcclusionTests.AddBounds(HZBBoundIter->BoundsOrigin, HZBBoundIter->BoundsExtent);
+				#else
+					HZBBoundIter->TargetHistory->HZBTestIndex = HZBOcclusionTests.AddBounds(HZBBoundIter->BoundsOrigin, HZBBoundIter->BoundsExtent);
+				#endif
 				}
 
 				//Manual query release handling
@@ -1631,7 +1663,7 @@ static int32 OcclusionCull(FRHICommandListImmediate& RHICmdList, const FScene* S
 
 			if( bHZBOcclusion )
 			{					
-			#if 1
+			#if SL_USE_MOBILEHZB
 				ViewState->HZBOcclusionTests.MapResults(RHICmdList, ViewState->OcclusionFrameCounter);
 			#else
 				check(!ViewState->HZBOcclusionTests.IsValidFrame(ViewState->OcclusionFrameCounter));
@@ -1658,7 +1690,7 @@ static int32 OcclusionCull(FRHICommandListImmediate& RHICmdList, const FScene* S
 			{
 				QUICK_SCOPE_CYCLE_COUNTER(STAT_HZBUnmapResults);
 
-			#if 1
+			#if SL_USE_MOBILEHZB
 				ViewState->HZBOcclusionTests.UnmapResults(RHICmdList, ViewState->OcclusionFrameCounter);
 			#else
 				ViewState->HZBOcclusionTests.UnmapResults(RHICmdList);
