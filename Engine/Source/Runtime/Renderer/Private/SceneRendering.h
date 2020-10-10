@@ -45,6 +45,9 @@ struct FExposureBufferData;
 
 DECLARE_STATS_GROUP(TEXT("Command List Markers"), STATGROUP_CommandListMarkers, STATCAT_Advanced);
 
+// @StarLight code - BEGIN HZB Created By YJH
+#define SL_USE_MOBILEHZB 1
+// @StarLight code - END HZB Created By YJH
 
 /** Mobile only. Information used to determine whether static meshes will be rendered with CSM shaders or not. */
 class FMobileCSMVisibilityInfo
@@ -391,13 +394,12 @@ public:
 
 	uint32 AddBounds( const FVector& BoundsOrigin, const FVector& BoundsExtent );
 
-	//YJH Created By 2020-9-22
+	// @StarLight code - BEGIN HZB Created By YJH
 	void MobileSubmit(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
-	//End
+	// @StarLight code - END HZB Created By YJH
 	
 	void Submit(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
 
-	//因为当前map时需要确定当前帧使用哪个fence
 	void MapResults(FRHICommandListImmediate& RHICmdList, uint32 FrameNumber = 0);
 	void UnmapResults(FRHICommandListImmediate& RHICmdList, uint32 FrameNumber = 0);
 
@@ -408,14 +410,9 @@ public:
 
 	void SetValidFrameNumber(uint32 FrameNumber);
 
-	//YJH Created by 2020-9-23
-	enum { MobileFenceNum = 2 };
-	//END
-
-
 private:
-	enum { SizeX = 256 };
-	enum { SizeY = 256 };
+	enum { SizeX = 256  };
+	enum { SizeY = 256  };
 	enum { FrameNumberMask = 0x7fffffff };
 	enum { InvalidFrameNumber = 0xffffffff };	
 
@@ -423,10 +420,6 @@ private:
 	TArray< FOcclusionPrimitive, SceneRenderingAllocator >	Primitives;
 
 	TRefCountPtr<IPooledRenderTarget>	ResultsTextureCPU;
-
-	//YJH Created By 2020-9-24
-	TRefCountPtr<IPooledRenderTarget>	MobileResultsTextureCPU[2];
-	//END
 
 	const uint8*						ResultsBuffer;
 	
@@ -438,9 +431,17 @@ private:
 	uint32 ValidFrameNumber;
 	FGPUFenceRHIRef Fence;
 
-	//YJH Created By 2020-9-23
+	// @StarLight code - BEGIN HZB Created By YJH
+#if SL_USE_MOBILEHZB
+public:
+	enum { MobileFenceNum = 2 };
+	enum { MobileSizeX = 128 };
+	enum { MobileSizeY = 128 };
 	FGPUFenceRHIRef MobileFence[MobileFenceNum];
 	uint32 MobileValidFrameNumbers[MobileFenceNum];
+	TRefCountPtr<IPooledRenderTarget>	MobileResultsTextureCPU[2];
+#endif
+	// @StarLight code - END HZB Created By YJH
 };
 
 DECLARE_STATS_GROUP(TEXT("Parallel Command List Markers"), STATGROUP_ParallelCommandListMarkers, STATCAT_Advanced);
@@ -1607,10 +1608,9 @@ public:
 	/** Issues occlusion queries. */
 	void BeginOcclusionTests(FRHICommandListImmediate& RHICmdList, bool bRenderQueries);
 
-	//YJH Created
+	// @StarLight code - BEGIN HZB Created By YJH
 	bool DoHZBOcclusion() const;
-	//End
-
+	// @StarLight code - END HZB Created By YJH
 
 	// fences to make sure the rhi thread has digested the occlusion query renders before we attempt to read them back async
 	static FGraphEventRef OcclusionSubmittedFence[FOcclusionQueryHelpers::MaxBufferedOcclusionFrames];
@@ -1863,9 +1863,9 @@ protected:
 	void MobileComputeLightGrid(FRHICommandListImmediate& RHICmdList);
 	// end
 
-	//Created By YJH 2020-9-24
+	// @StarLight code - BEGIN HZB Created By YJH
 	void MobileRenderHZB(FRHICommandListImmediate& RHICmdList);
-	//End
+	// @StarLight code - BEGIN HZB Created By YJH
 
 	void InitViews(FRHICommandListImmediate& RHICmdList);
 

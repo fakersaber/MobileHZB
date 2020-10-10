@@ -575,6 +575,9 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 		if(bLockableTarget && FOpenGL::SupportsPixelBuffers() && !ResolveParams.Rect.IsValid())
 		{
 #if PLATFORM_ANDROID		
+			//Debug Begin
+			uint32 IdleStart = FPlatformTime::Cycles();
+
 			check(FOpenGL::SupportsPixelBuffers());
 			FOpenGLTexture2D* DestTex = (FOpenGLTexture2D*)DestTexture;
 			GLuint DesFBO = GetOpenGLFramebuffer(1, &DestTexture, &DestIndex, &MipmapLevel, NULL); 
@@ -601,6 +604,9 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 
 			glPixelStorei(GL_PACK_ALIGNMENT, 4);
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+			//Debug End
+			//UE_LOG(LogTemp, Log, TEXT("HZB: CopyTexture: %u"), FPlatformTime::Cycles() - IdleStart);
 #else
 			FOpenGLTexture2D* DestTex = (FOpenGLTexture2D*)DestTexture;
 			DestTex->Resolve(MipmapLevel, DestIndex);
@@ -857,15 +863,7 @@ void FOpenGLDynamicRHI::ReadSurfaceDataRaw(FOpenGLContextState& ContextState, FR
 		int32 RGBADataSize = sizeof(GLubyte)* PixelComponentCount;
 		GLubyte* RGBAData = (GLubyte*)FMemory::Malloc(RGBADataSize);
 
-		////TEST
-		//uint32 IdleStart = FPlatformTime::Cycles();
-		////TEST End
-
 		glReadPixels(Rect.Min.X, Rect.Min.Y, SizeX, SizeY, GL_RGBA, GL_UNSIGNED_BYTE, RGBAData);
-
-		////TEST
-		//UE_LOG(LogTemp, Log, TEXT("glReadPixels: %u"), FPlatformTime::Cycles() - IdleStart);
-		////TEST End
 
 		//OpenGL ES reads the pixels "upside down" from what we're expecting (flipped vertically), so we need to transfer the data from the bottom up.
 		uint8* TargetPtr = TargetBuffer;
@@ -993,7 +991,7 @@ void FOpenGLDynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFen
 	RHITHREAD_GLCOMMAND_PROLOGUE();
 
 	VERIFY_GL_SCOPE();
-
+	
 	FOpenGLTexture2D* Texture2D = (FOpenGLTexture2D*)TextureRHI->GetTexture2D();
 	check(Texture2D);
 	check(Texture2D->IsStaging());
@@ -1006,7 +1004,7 @@ void FOpenGLDynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFen
 	RHITHREAD_GLCOMMAND_EPILOGUE();
 }
 
-//YJH Created By 2020-9-30
+// @StarLight code - BEGIN HZB Created By YJH
 void FOpenGLDynamicRHI::RHIMapStagingSurfaceNoFlush(FRHITexture* TextureRHI, void*& OutData) {
 	check(IsInRenderingThread() && IsRunningRHIInSeparateThread() && IsRunningRHIInDedicatedThread());
 
@@ -1041,7 +1039,7 @@ void FOpenGLDynamicRHI::RHIUnMapStagingSurfaceNoFlush(FRHITexture* TextureRHI) {
 	RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 	FRHICommandListExecutor::WaitOnRHIThreadFence(Done);
 }
-
+// @StarLight code - END HZB Created By YJH
 
 void FOpenGLDynamicRHI::RHIUnmapStagingSurface(FRHITexture* TextureRHI, uint32 GPUIndex)
 {

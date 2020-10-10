@@ -6,6 +6,10 @@
 
 #define SL_USE_MOBILEHZB 1
 
+DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Generator"), STAT_CLMM_HZBOcclusionGenerator, STATGROUP_CommandListMarkers);
+DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Submit"), STAT_CLMM_HZBCopyOcclusionSubmit, STATGROUP_CommandListMarkers);
+
+
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileSceneTextures, )
 
 SHADER_PARAMETER_RDG_TEXTURE(Texture2D, MobileSceneColorBuffer)
@@ -177,9 +181,10 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 
 	FSceneViewState* ViewState = (FSceneViewState*)Views[0].State;
 
-	if (DoHZBOcclusion() && ViewState && ViewState->HZBOcclusionTests.GetNum() != 0) {
+	if (ViewState && ViewState->HZBOcclusionTests.GetNum() != 0) {
 		//Hiz generator
 		{
+			RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusionGenerator));
 			FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
 			FMobileSceneTextures HZBParameter;
 			FRDGBuilder GraphBuilder(RHICmdList);
@@ -190,6 +195,7 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 
 		//Issuse Hiz Occlusion Query
 		{
+			RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBCopyOcclusionSubmit));
 			ViewState->HZBOcclusionTests.MobileSubmit(RHICmdList, Views[0]);
 			ViewState->HZBOcclusionTests.SetValidFrameNumber(ViewState->OcclusionFrameCounter);
 		}

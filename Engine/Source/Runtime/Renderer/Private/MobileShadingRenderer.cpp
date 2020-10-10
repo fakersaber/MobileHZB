@@ -102,6 +102,11 @@ DECLARE_CYCLE_STAT(TEXT("SceneEnd"), STAT_CLMM_SceneEnd, STATGROUP_CommandListMa
 DECLARE_CYCLE_STAT(TEXT("InitViews"), STAT_CLMM_InitViews, STATGROUP_CommandListMarkers);
 DECLARE_CYCLE_STAT(TEXT("Opaque"), STAT_CLMM_Opaque, STATGROUP_CommandListMarkers);
 DECLARE_CYCLE_STAT(TEXT("Occlusion"), STAT_CLMM_Occlusion, STATGROUP_CommandListMarkers);
+
+//YJH Created By 2020-10-9
+DECLARE_CYCLE_STAT(TEXT("HZBOcclusion"), STAT_CLMM_HZBOcclusion, STATGROUP_CommandListMarkers);
+//End
+
 DECLARE_CYCLE_STAT(TEXT("Post"), STAT_CLMM_Post, STATGROUP_CommandListMarkers);
 DECLARE_CYCLE_STAT(TEXT("Translucency"), STAT_CLMM_Translucency, STATGROUP_CommandListMarkers);
 DECLARE_CYCLE_STAT(TEXT("Shadows"), STAT_CLMM_Shadows, STATGROUP_CommandListMarkers);
@@ -427,7 +432,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FMobileSceneRenderer_Render);
 	//FRHICommandListExecutor::GetImmediateCommandList().ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 
-	if(!ViewFamily.EngineShowFlags.Rendering)
+	if (!ViewFamily.EngineShowFlags.Rendering)
 	{
 		return;
 	}
@@ -465,8 +470,8 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	const bool bSeparateTranslucencyActive = IsMobileSeparateTranslucencyActive(View);
 	bool bKeepDepthContent = bForceDepthResolve || (bRenderToSceneColor &&
 		(bSeparateTranslucencyActive ||
-		 View.bIsReflectionCapture ||
-		 (View.bIsSceneCapture && (ViewFamily.SceneCaptureSource == ESceneCaptureSource::SCS_SceneColorHDR || ViewFamily.SceneCaptureSource == ESceneCaptureSource::SCS_SceneColorSceneDepth))));
+			View.bIsReflectionCapture ||
+			(View.bIsSceneCapture && (ViewFamily.SceneCaptureSource == ESceneCaptureSource::SCS_SceneColorHDR || ViewFamily.SceneCaptureSource == ESceneCaptureSource::SCS_SceneColorSceneDepth))));
 
 	// Whether to submit cmdbuffer with offscreen rendering before doing post-processing
 	bool bSubmitOffscreenRendering = !bGammaSpace || bRenderToSceneColor;
@@ -492,7 +497,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 
 	// Find the visible primitives.
 	InitViews(RHICmdList);
-	
+
 	if (GRHINeedsExtraDeletionLatency || !GRHICommandList.Bypass())
 	{
 		QUICK_SCOPE_CYCLE_COUNTER(STAT_FMobileSceneRenderer_PostInitViewsFlushDel);
@@ -545,7 +550,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 
 	// Default view list
 	TArray<const FViewInfo*> ViewList;
-	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++) 
+	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
 		ViewList.Add(&Views[ViewIndex]);
 	}
@@ -556,7 +561,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	{
 		RenderCustomDepthPass(RHICmdList);
 	}
-		
+
 	//YJH Created 2020-7-19
 	//Whether to RenderDownSample Translucency
 	bool bShouldRenderDownSampleTranslucency = CVarMobileSeparateTranslucency.GetValueOnAnyThread() > 0 && !bKeepDepthContent && View.ParallelMeshDrawCommandPasses[EMeshPass::TranslucencyDownSampleSeparate].HasAnyDraw();
@@ -568,7 +573,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	ERenderTargetActions ColorTargetAction = ERenderTargetActions::Clear_Store;
 	EDepthStencilTargetActions DepthTargetAction = EDepthStencilTargetActions::ClearDepthStencil_DontStoreDepthStencil;
 	bool bMobileMSAA = SceneContext.GetSceneColorSurface()->GetNumSamples() > 1;
-	
+
 	if (bGammaSpace && !bRenderToSceneColor)
 	{
 		if (bMobileMSAA)
@@ -593,14 +598,14 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 		SceneColorResolve = bMobileMSAA ? SceneContext.GetSceneColorTexture() : nullptr;
 		ColorTargetAction = bMobileMSAA ? ERenderTargetActions::Clear_Resolve : ERenderTargetActions::Clear_Store;
 		SceneDepth = SceneContext.GetSceneDepthSurface();
-				
+
 		if (bRequiresTranslucencyPass)
-		{	
+		{
 			// store targets after opaque so translucency render pass can be restarted
 			ColorTargetAction = ERenderTargetActions::Clear_Store;
 			DepthTargetAction = EDepthStencilTargetActions::ClearDepthStencil_StoreDepthStencil;
 		}
-						
+
 		if (bKeepDepthContent && !bMobileMSAA)
 		{
 			// store depth if post-processing/capture needs it
@@ -609,8 +614,8 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	}
 
 	FRHITexture* FoveationTexture = nullptr;
-	
-	if (SceneContext.IsFoveationTextureAllocated()	&& !View.bIsSceneCapture && !View.bIsReflectionCapture)
+
+	if (SceneContext.IsFoveationTextureAllocated() && !View.bIsSceneCapture && !View.bIsReflectionCapture)
 	{
 		FoveationTexture = SceneContext.GetFoveationTexture();
 	}
@@ -635,7 +640,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	{
 		SceneContext.BindVirtualTextureFeedbackUAV(SceneColorRenderPassInfo);
 	}
-	
+
 	RHICmdList.BeginRenderPass(SceneColorRenderPassInfo, TEXT("SceneColorRendering"));
 
 	RHICmdList.SetCurrentStat(GET_STATID(STAT_CLM_MobilePrePass));
@@ -645,7 +650,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	{
 		DrawClearQuad(RHICmdList, Views[0].BackgroundColor);
 	}
-	
+
 	// Opaque and masked
 	RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Opaque));
 	RenderMobileBasePass(RHICmdList, ViewList);
@@ -665,10 +670,10 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	const bool bAdrenoOcclusionMode = CVarMobileAdrenoOcclusionMode.GetValueOnRenderThread() != 0;
 	if (!bAdrenoOcclusionMode)
 	{
-	    // Issue occlusion queries
-	    RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Occlusion));
-	    RenderOcclusion(RHICmdList);
-	    RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
+		// Issue occlusion queries
+		RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Occlusion));
+		RenderOcclusion(RHICmdList);
+		RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 	}
 
 	{
@@ -685,7 +690,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 
 	// scene depth is read only and can be fetched
 	RHICmdList.NextSubpass();
-				
+
 	// Split if we need to render translucency in a separate render pass
 	if (bRequiresTranslucencyPass)
 	{
@@ -694,7 +699,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 
 	RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Translucency));
 
-		
+
 	// Restart translucency render pass if needed
 	if (bRequiresTranslucencyPass)
 	{
@@ -710,7 +715,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 			// FIXME: modulated shadows write to stencil
 			ExclusiveDepthStencil = FExclusiveDepthStencil::DepthRead_StencilWrite;
 		}
-		
+
 		if (bKeepDepthContent && !bMobileMSAA)
 		{
 			DepthTargetAction = EDepthStencilTargetActions::LoadDepthStencil_StoreDepthStencil;
@@ -746,7 +751,7 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 			RenderModulatedShadowProjections(RHICmdList);
 		}
 	}
-	
+
 	// Draw translucency.
 	if (ViewFamily.EngineShowFlags.Translucency)
 	{
@@ -759,13 +764,13 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 
 	if (bAdrenoOcclusionMode)
 	{
-	    RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Occlusion));
+		RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Occlusion));
 		// flush
 		RHICmdList.SubmitCommandsHint();
 		bSubmitOffscreenRendering = false; // submit once
 		// Issue occlusion queries
 		RenderOcclusion(RHICmdList);
-	    RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
+		RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 	}
 
 	// Pre-tonemap before MSAA resolve (iOS only)
@@ -773,13 +778,17 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	{
 		PreTonemapMSAA(RHICmdList);
 	}
-	
+
 	// End of scene color rendering
 	RHICmdList.EndRenderPass();
 
-	//YJH Created By 2020-9-25
-	MobileRenderHZB(RHICmdList);
-	//YJH End
+	// @StarLight code - BEGIN HZB Created By YJH
+	if(DoHZBOcclusion())
+	{
+		RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusion));
+		MobileRenderHZB(RHICmdList);
+	}
+	// @StarLight code - END HZB Created By YJH
 
 
 	if (Scene->FXSystem && Views.IsValidIndex(0))

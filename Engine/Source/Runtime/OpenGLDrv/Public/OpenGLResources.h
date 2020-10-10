@@ -1551,22 +1551,14 @@ public:
 	 */
 	void CloneViaPBO( TOpenGLTexture* Src, uint32 InNumMips, int32 SrcOffset, int32 DstOffset);
 
-	//Created By YJH 2020-9-22
-	//Used for readback
-
-//#pragma message( "Compiling " __FILE__ )
-//	bool ReadBackResource(uint32 MipIndex, uint32 ArrayIndex);
-	//End
-
 	/**
 	 * Resolved the specified face for a read Lock, for non-renderable, CPU readable surfaces this eliminates the readback inside Lock itself.
 	 */
 	void Resolve(uint32 MipIndex,uint32 ArrayIndex);
 
-	TArray< TRefCountPtr<FOpenGLPixelBuffer> >& GetPixelBuffers() {
-		return PixelBuffers;
-	}
-
+	// @StarLight code - BEGIN HZB, Created by YJH
+	TArray< TRefCountPtr<FOpenGLPixelBuffer> >& GetPixelBuffers() { return PixelBuffers; }
+	// @StarLight code - END HZB, Created by YJH
 
 private:
 

@@ -53,6 +53,9 @@
 #include "Halton.h"
 #endif
 
+// #change by wh, 2020/7/22
+#include "MobileClusterForwardLighting.h"
+// end
 
 /** Factor by which to grow occlusion tests **/
 #define OCCLUSION_SLOP (1.0f)
@@ -169,7 +172,7 @@ public:
 	/** Initialization constructor. */
 	inline FPrimitiveOcclusionHistory(FPrimitiveComponentId InPrimitiveId, int32 SubQuery)
 		: PrimitiveId(InPrimitiveId)
-		, LastTestFrameNumber{ 0 }
+		, LastTestFrameNumber{ ~0u }
 		, LastConsideredFrameNumber(~0u)
 		, HZBTestIndex{ 0 }
 		, LastProvenVisibleTime(0.0f)
@@ -189,7 +192,7 @@ public:
 	}
 
 	inline FPrimitiveOcclusionHistory()
-		: LastTestFrameNumber{ 0 }
+		: LastTestFrameNumber{ ~0u }
 		, LastConsideredFrameNumber(~0u)
 		, HZBTestIndex{ 0 }
 		, LastProvenVisibleTime(0.0f)
