@@ -2191,12 +2191,12 @@ struct FRelevancePacket
 			float MeshScreenSizeSquared = 0;
 			FLODMask LODToRender;
 
-			if (PrimitiveSceneInfo->Proxy->IsUsingCustomLODRules())
+			if (PrimitiveSceneInfo->bIsUsingCustomLODRules)
 			{
-				//PRAGMA_DISABLE_DEPRECATION_WARNINGS
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				LODToRender = PrimitiveSceneInfo->Proxy->GetCustomLOD(View, View.LODDistanceFactor, ViewData.ForcedLODLevel, MeshScreenSizeSquared);
 				LODToRender.ClampToFirstLOD(CurFirstLODIdx);
-				//PRAGMA_ENABLE_DEPRECATION_WARNINGS
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 			else
 			{
