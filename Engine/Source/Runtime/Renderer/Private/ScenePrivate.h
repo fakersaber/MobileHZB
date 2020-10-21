@@ -101,9 +101,9 @@ public:
 
 	// @StarLight code - BEGIN HZB Created By YJH
 #if SL_USE_MOBILEHZB
-	uint32 LastTestFrameNumber[FHZBOcclusionTester::MobileFenceNum];
+	uint32 LastTestFrameNumber[FHZBOcclusionTester::MobileTargetCapacity];
 	uint32 LastConsideredFrameNumber;
-	uint32 HZBTestIndex[FHZBOcclusionTester::MobileFenceNum];
+	uint32 HZBTestIndex[FHZBOcclusionTester::MobileTargetCapacity];
 #else
 	uint32 LastTestFrameNumber;
 	uint32 LastConsideredFrameNumber;
@@ -172,7 +172,7 @@ public:
 	/** Initialization constructor. */
 	inline FPrimitiveOcclusionHistory(FPrimitiveComponentId InPrimitiveId, int32 SubQuery)
 		: PrimitiveId(InPrimitiveId)
-		, LastTestFrameNumber{ ~0u }
+		, LastTestFrameNumber{ ~0u,  ~0u }
 		, LastConsideredFrameNumber(~0u)
 		, HZBTestIndex{ 0 }
 		, LastProvenVisibleTime(0.0f)
@@ -192,7 +192,7 @@ public:
 	}
 
 	inline FPrimitiveOcclusionHistory()
-		: LastTestFrameNumber{ ~0u }
+		: LastTestFrameNumber{ ~0u, ~0u }
 		, LastConsideredFrameNumber(~0u)
 		, HZBTestIndex{ 0 }
 		, LastProvenVisibleTime(0.0f)

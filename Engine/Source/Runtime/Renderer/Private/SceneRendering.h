@@ -393,10 +393,6 @@ public:
 	uint32 GetNum() const { return Primitives.Num(); }
 
 	uint32 AddBounds( const FVector& BoundsOrigin, const FVector& BoundsExtent );
-
-	// @StarLight code - BEGIN HZB Created By YJH
-	void MobileSubmit(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
-	// @StarLight code - END HZB Created By YJH
 	
 	void Submit(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
 
@@ -434,12 +430,18 @@ private:
 	// @StarLight code - BEGIN HZB Created By YJH
 #if SL_USE_MOBILEHZB
 public:
-	enum { MobileFenceNum = 2 };
+	void MobileSubmit(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
+	void WriteOccludedData(FRHICommandListImmediate& RHICmdList, uint32 CurFrameIndex);
+	enum { MobileTargetCapacity = 2 };
 	enum { MobileSizeX = 128 };
 	enum { MobileSizeY = 128 };
-	FGPUFenceRHIRef MobileFence[MobileFenceNum];
-	uint32 MobileValidFrameNumbers[MobileFenceNum];
-	TRefCountPtr<IPooledRenderTarget>	MobileResultsTextureCPU[2];
+	FGPUFenceRHIRef MobileFence[MobileTargetCapacity];
+	uint32 MobileValidFrameNumbers[MobileTargetCapacity];
+	TRefCountPtr<IPooledRenderTarget> MobileResultsTextureCPU[MobileTargetCapacity];
+	TRefCountPtr<IPooledRenderTarget> MobileExtentTexture[MobileTargetCapacity];
+	TRefCountPtr<IPooledRenderTarget> MobileCenterTexture[MobileTargetCapacity];
+
+
 #endif
 	// @StarLight code - END HZB Created By YJH
 };

@@ -785,8 +785,13 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	// @StarLight code - BEGIN HZB Created By YJH
 	if(DoHZBOcclusion())
 	{
+		// Hint to the RHI to submit commands up to this point to the GPU if possible.  Can help avoid CPU stalls next frame waiting
+		// for these query results on some platforms.
 		RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusion));
 		MobileRenderHZB(RHICmdList);
+		RHICmdList.SubmitCommandsHint();
+		bSubmitOffscreenRendering = false; // submit once
+		RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 	}
 	// @StarLight code - END HZB Created By YJH
 

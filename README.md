@@ -1,3 +1,2 @@
 # MobileHZB
 
-- 最后结果Adreno系列原生Query很慢都HZB有正优化，Mali系Query很快性能不太敏感提升不明显。因为保守剔除的缘故如果多出来的Primitive超出省下来的性能为负优化

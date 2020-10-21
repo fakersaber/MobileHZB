@@ -447,7 +447,42 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 	FOpenGLTextureBase* SourceTexture = GetOpenGLTextureFromRHITexture(SourceTextureRHI);
 	FOpenGLTextureBase* DestTexture = GetOpenGLTextureFromRHITexture(DestTextureRHI);
 
-	if (SourceTexture != DestTexture && FOpenGL::SupportsBlitFramebuffer())
+	if (SourceTexture == DestTexture && (DestTextureRHI->GetFlags() & TexCreate_CPUReadback) && (DestTextureRHI->GetFlags() & TexCreate_RenderTargetable)) {
+		//uint32 IdleStart = FPlatformTime::Cycles();
+
+		uint32 DestIndex = 0;
+		uint32 MipmapLevel = 0;
+
+		check(FOpenGL::SupportsPixelBuffers());
+		FOpenGLTexture2D* DestTex = (FOpenGLTexture2D*)DestTexture;
+		GLuint DesFBO = GetOpenGLFramebuffer(1, &DestTexture, &DestIndex, &MipmapLevel, NULL);
+		TRefCountPtr<FOpenGLPixelBuffer>& PixelBuffer = DestTex->GetPixelBuffers()[DestIndex];
+
+		EPixelFormat PixelFormat = DestTex->GetFormat();
+		// Some android devices does not support BGRA as a color attachment
+		check(PF_R8G8B8A8 == PixelFormat);
+
+		const uint32 BlockBytes = GPixelFormats[PixelFormat].BlockBytes;
+		const uint32 MipSizeX = DestTex->GetSizeX();
+		const uint32 MipSizeY = DestTex->GetSizeY();
+
+		if (!IsValidRef(PixelBuffer)) {
+			const uint32 MipBytes = MipSizeX * MipSizeY * BlockBytes;
+			PixelBuffer = new FOpenGLPixelBuffer(0, MipBytes, BUF_Dynamic);
+		}
+
+		glBindFramebuffer(UGL_READ_FRAMEBUFFER, DesFBO);
+		FOpenGL::ReadBuffer(GL_COLOR_ATTACHMENT0);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, PixelBuffer->Resource);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+		glReadPixels(0, 0, MipSizeX, MipSizeY, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+		glPixelStorei(GL_PACK_ALIGNMENT, 4);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+		//UE_LOG(LogTemp, Log, TEXT("HZB: CopyTexture: %u"), FPlatformTime::Cycles() - IdleStart);
+	}
+	else if (SourceTexture != DestTexture && FOpenGL::SupportsBlitFramebuffer())
 	{
 		VERIFY_GL_SCOPE();
 
@@ -489,11 +524,7 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 
 		const bool bTrueBlit = !SourceTextureRHI->IsMultisampled()
 			&& !DestTextureRHI->IsMultisampled()
-			&& (SourceTextureRHI->GetFormat() == DestTextureRHI->GetFormat() || 
-				// @StarLight code - BEGIN HZB, Created by yjh
-				((DestTextureRHI->GetFlags() & TexCreate_CPUReadback) && !(DestTextureRHI->GetFlags() & (TexCreate_RenderTargetable | TexCreate_DepthStencilTargetable)))
-				// @StarLight code - End HZB, Created by yjh
-				)
+			&& SourceTextureRHI->GetFormat() == DestTextureRHI->GetFormat() 
 			&& SrcRect.Size() == DestRect.Size()
 			&& SrcRect.Width() > 0
 			&& SrcRect.Height() > 0
@@ -574,43 +605,13 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 		bool bLockableTarget = DestTextureRHI->GetTexture2D() && (DestTextureRHI->GetFlags() & TexCreate_CPUReadback) && !(DestTextureRHI->GetFlags() & (TexCreate_RenderTargetable | TexCreate_DepthStencilTargetable)) && !DestTextureRHI->IsMultisampled();
 		if(bLockableTarget && FOpenGL::SupportsPixelBuffers() && !ResolveParams.Rect.IsValid())
 		{
-#if PLATFORM_ANDROID		
-			//Debug Begin
-			uint32 IdleStart = FPlatformTime::Cycles();
-
-			check(FOpenGL::SupportsPixelBuffers());
 			FOpenGLTexture2D* DestTex = (FOpenGLTexture2D*)DestTexture;
-			GLuint DesFBO = GetOpenGLFramebuffer(1, &DestTexture, &DestIndex, &MipmapLevel, NULL); 
-			TRefCountPtr<FOpenGLPixelBuffer>& PixelBuffer = DestTex->GetPixelBuffers()[SrcIndex];
-
-			EPixelFormat PixelFormat = DestTex->GetFormat();
-			check(PF_B8G8R8A8 == PixelFormat);
-
-			const uint32 BlockBytes = GPixelFormats[PixelFormat].BlockBytes;
-			const uint32 MipSizeX = DestTex->GetSizeX();
-			const uint32 MipSizeY = DestTex->GetSizeY();	
-
-			if (!IsValidRef(PixelBuffer)){
-				const uint32 MipBytes = MipSizeX * MipSizeY * BlockBytes;
-				PixelBuffer = new FOpenGLPixelBuffer(0, MipBytes, BUF_Dynamic);
-			}
-
-			glBindFramebuffer(UGL_READ_FRAMEBUFFER, DesFBO);
-			FOpenGL::ReadBuffer(GL_COLOR_ATTACHMENT0);
-			glBindBuffer(GL_PIXEL_PACK_BUFFER, PixelBuffer->Resource);
-			glPixelStorei(GL_PACK_ALIGNMENT, 1);
-
-			glReadPixels(0, 0, MipSizeX, MipSizeY, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-			glPixelStorei(GL_PACK_ALIGNMENT, 4);
-			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-
-			//Debug End
-			//UE_LOG(LogTemp, Log, TEXT("HZB: CopyTexture: %u"), FPlatformTime::Cycles() - IdleStart);
-#else
-			FOpenGLTexture2D* DestTex = (FOpenGLTexture2D*)DestTexture;
+			// @StarLight code - BEGIN HZB, Created by yjh
+			//OpenGLES下可以兼容TexCreate_CPUReadback和TexCreate_RenderTargetable,且ES不存在GetTexImage,所以必定不会调用到Resolve
+		#if !PLATFORM_ANDROID
 			DestTex->Resolve(MipmapLevel, DestIndex);
-#endif
+		#endif
+			// @StarLight code - END HZB, Created by yjh
 		}
 
 		GetContextStateForCurrentContext().Framebuffer = (GLuint)-1;
@@ -1005,13 +1006,13 @@ void FOpenGLDynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFen
 }
 
 // @StarLight code - BEGIN HZB Created By YJH
-void FOpenGLDynamicRHI::RHIMapStagingSurfaceNoFlush(FRHITexture* TextureRHI, void*& OutData) {
+void FOpenGLDynamicRHI::RHIMapStagingSurfaceNoFlush(FRHITexture* Texture, FRHIGPUFence* Fence, void*& OutData) {
 	check(IsInRenderingThread() && IsRunningRHIInSeparateThread() && IsRunningRHIInDedicatedThread());
 
 	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
 
 	ALLOC_COMMAND_CL(RHICmdList, FRHICommandGLCommand)([&]() {
-			FOpenGLTexture2D* Texture2D = (FOpenGLTexture2D*)TextureRHI->GetTexture2D();
+			FOpenGLTexture2D* Texture2D = (FOpenGLTexture2D*)Texture->GetTexture2D();
 			check(Texture2D);
 			check(Texture2D->IsStaging());
 

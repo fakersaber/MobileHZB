@@ -175,8 +175,6 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 
 void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList) {
 
-#if SL_USE_MOBILEHZB
-
 	SCOPED_DRAW_EVENT(RHICmdList, MobileHZB);
 
 	FSceneViewState* ViewState = (FSceneViewState*)Views[0].State;
@@ -196,17 +194,13 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 		//Issuse Hiz Occlusion Query
 		{
 			RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBCopyOcclusionSubmit));
+#if SL_USE_MOBILEHZB
 			ViewState->HZBOcclusionTests.MobileSubmit(RHICmdList, Views[0]);
 			ViewState->HZBOcclusionTests.SetValidFrameNumber(ViewState->OcclusionFrameCounter);
-		}
-
-		// Hint to the RHI to submit commands up to this point to the GPU if possible.  Can help avoid CPU stalls next frame waiting
-		// for these query results on some platforms.
-		{
-			RHICmdList.SubmitCommandsHint();
-			RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
+#else
+			ViewState->HZBOcclusionTests.Submit(RHICmdList, Views[0]);
+#endif
 		}
 	}
 
-#endif
 }

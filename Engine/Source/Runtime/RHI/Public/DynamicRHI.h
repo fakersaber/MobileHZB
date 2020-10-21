@@ -1045,15 +1045,11 @@ public:
 	// FlushType: Flush Immediate (seems wrong)
 	virtual void RHIMapStagingSurface(FRHITexture* Texture, FRHIGPUFence* Fence, void*& OutData, int32& OutWidth, int32& OutHeight, uint32 GPUIndex = 0) = 0;
 
-	//YJH Created By 2020-9-30
-	virtual void RHIMapStagingSurfaceNoFlush(FRHITexture* Texture, void*& OutData) {
+	// @StarLight code - BEGIN HZB Created By YJH
+	virtual void RHIMapStagingSurfaceNoFlush(FRHITexture* Texture, FRHIGPUFence* Fence, void*& OutData) { }
 
-	}
-
-	virtual void RHIUnMapStagingSurfaceNoFlush(FRHITexture* Texture) {
-
-	}
-	//End
+	virtual void RHIUnMapStagingSurfaceNoFlush(FRHITexture* Texture) { }
+	// @StarLight code - END HZB Created By YJH
 
 	/** call after a succesful RHIMapStagingSurface() call */
 	// FlushType: Flush Immediate (seems wrong)
