@@ -13,6 +13,7 @@ DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Submit"), STAT_CLMM_HZBCopyOcclusionSubmit
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileSceneTextures, )
 
 SHADER_PARAMETER_RDG_TEXTURE(Texture2D, MobileSceneColorBuffer)
+SHADER_PARAMETER_RDG_TEXTURE(Texture2D, MobileSceneDepthBuffer)
 
 END_SHADER_PARAMETER_STRUCT()
 
@@ -48,30 +49,59 @@ class FMobileHZBBuildPS : public FGlobalShader
 	}
 
 };
-IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildPS, "/Engine/Private/MobileHZB.usf", "HZBBuildPS", SF_Pixel);
 
-static constexpr int32 kMaxMipBatchSize = 4;
+class FMobileHZBBuildCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FMobileHZBBuildCS);
+	SHADER_USE_PARAMETER_STRUCT(FMobileHZBBuildCS, FGlobalShader)
+
+	static constexpr int32 kMaxMipBatchSize = 1;
+
+	//class FDimFurthest : SHADER_PERMUTATION_BOOL("DIM_FURTHEST");
+	class FDimMipLevelCount : SHADER_PERMUTATION_RANGE_INT("DIM_MIP_LEVEL_COUNT", 1, kMaxMipBatchSize);
+	using FPermutationDomain = TShaderPermutationDomain<FDimMipLevelCount>;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_INCLUDE(FMobileHZBParameters, Shared)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, FurthestHZBOutput)
+		//SHADER_PARAMETER_RDG_TEXTURE_UAV_ARRAY(RWTexture2D<float>, FurthestHZBOutput, [kMaxMipBatchSize])
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return true;
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildPS, "/Engine/Private/MobileHZB.usf", "HZBBuildPS", SF_Pixel);
+IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildCS, "/Engine/Private/MobileHZB.usf", "HZBBuildCS", SF_Compute);
+
+
+constexpr bool bUseCompute = true;
 
 void SetupMobileHZBParameters(FRDGBuilder& GraphBuilder, FMobileSceneTextures* OutTextures){
 	const FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(GraphBuilder.RHICmdList);
 	OutTextures->MobileSceneColorBuffer = GraphBuilder.RegisterExternalTexture(SceneContext.GetSceneColor(), TEXT("SceneColor"));
+
+	//test
+	OutTextures->MobileSceneDepthBuffer = GraphBuilder.RegisterExternalTexture(SceneContext.SceneDepthZ, TEXT("SceneDepth"));
 }
 
 void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& SceneTextures, FViewInfo& View) {
 	FIntPoint HZBSize;
 	int32 NumMips;
 	{
-		const int32 NumMipsX = FMath::FloorLog2(View.ViewRect.Width());
-		const int32 NumMipsY = FMath::FloorLog2(View.ViewRect.Height());
+		const int32 NumMipsX = FMath::Max(FMath::CeilLogTwo(View.ViewRect.Width()) - 1, 1u);
+		const int32 NumMipsY = FMath::Max(FMath::CeilLogTwo(View.ViewRect.Height()) - 1, 1u);
 
-		NumMips = FMath::Max(NumMipsX, NumMipsY);
+		//NumMips = FMath::Max(NumMipsX, NumMipsY);
+		NumMips = 1;
 
 		// Must be power of 2
 		HZBSize = FIntPoint(1 << NumMipsX, 1 << NumMipsY);
 	}
 
-	constexpr bool bUseCompute = false;
-	int32 MaxMipBatchSize = bUseCompute ? kMaxMipBatchSize : 1;
+	int32 MaxMipBatchSize = bUseCompute ? FMobileHZBBuildCS::kMaxMipBatchSize : 1;
 
 	FRDGTextureDesc HZBDesc = FRDGTextureDesc::Create2DDesc(
 		HZBSize, PF_R16F,
@@ -101,7 +131,32 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 
 		if (bUseCompute)
 		{
-			//#TODO, Use CS?
+			//一次Dispatch最多输出4个?
+
+			int32 EndDestMip = FMath::Min(StartDestMip + FMobileHZBBuildCS::kMaxMipBatchSize, NumMips);
+
+			FMobileHZBBuildCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FMobileHZBBuildCS::FParameters>();
+			PassParameters->Shared = ShaderParameters;
+			for (int32 DestMip = StartDestMip; DestMip < EndDestMip; DestMip++){
+				PassParameters->FurthestHZBOutput = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(FurthestHZBTexture, DestMip));
+			}
+
+			FMobileHZBBuildCS::FPermutationDomain PermutationVector;
+			PermutationVector.Set<FMobileHZBBuildCS::FDimMipLevelCount>(EndDestMip - StartDestMip);
+
+
+			TShaderMapRef<FMobileHZBBuildCS> ComputeShader(View.ShaderMap, PermutationVector);
+
+			// TODO(RDG): remove ERDGPassFlags::GenerateMips to use FComputeShaderUtils::AddPass().
+			ClearUnusedGraphResources(ComputeShader, PassParameters);
+			GraphBuilder.AddPass(
+				RDG_EVENT_NAME("ReduceHZB(mips=[%d;%d]) %dx%d", StartDestMip, EndDestMip - 1, DstSize.X, DstSize.Y),
+				PassParameters,
+				StartDestMip ? (ERDGPassFlags::Compute | ERDGPassFlags::GenerateMips) : ERDGPassFlags::Compute,
+				[PassParameters, ComputeShader, DstSize](FRHICommandList& RHICmdList)
+				{
+					FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, *PassParameters, FComputeShaderUtils::GetGroupCount(DstSize, 8));
+				});
 		}
 		else
 		{
@@ -130,9 +185,17 @@ void MobileBuildHZB(FRDGBuilder& GraphBuilder, const FMobileSceneTextures& Scene
 
 	// Reduce first mips Closesy and furtherest are done at same time.
 	{
-		FIntPoint SrcSize = SceneTextures.MobileSceneColorBuffer->Desc.Extent;
-
-		FRDGTextureSRVRef ParentTextureMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(SceneTextures.MobileSceneColorBuffer));
+		//SceneColor version
+		FRDGTextureSRVRef ParentTextureMip;
+		FIntPoint SrcSize;
+		if (bUseCompute) {
+			SrcSize = SceneTextures.MobileSceneDepthBuffer->Desc.Extent;
+			 ParentTextureMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(SceneTextures.MobileSceneDepthBuffer));
+		}
+		else {
+			SrcSize = SceneTextures.MobileSceneColorBuffer->Desc.Extent;
+			ParentTextureMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(SceneTextures.MobileSceneColorBuffer));
+		}
 
 		FVector4 DispatchThreadIdToBufferUV;
 		DispatchThreadIdToBufferUV.X = 2.0f / float(SrcSize.X);
