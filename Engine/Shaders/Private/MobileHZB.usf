@@ -9,9 +9,6 @@ float2 InputViewportMaxBound;
 Texture2D ParentTextureMip;
 SamplerState ParentTextureMipSampler;
 
-#define MAX_MIP_BATCH_SIZE 4
-#define GROUP_TILE_SIZE 8
-
 #if PIXELSHADER
 void HZBBuildPS
 (
@@ -43,6 +40,11 @@ void HZBBuildPS
 }
 
 #elif 1
+
+#define MAX_MIP_BATCH_SIZE 4
+#define GROUP_TILE_SIZE 8
+
+
 RWTexture2D<float> FurthestHZBOutput;
 
 //RWTexture2D<float> FurthestHZBOutput_0;
@@ -55,24 +57,24 @@ groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE * GROUP_TILE_SIZE];
 
 void OutputMipLevel(uint MipLevel, uint2 OutputPixelPos, float FurthestDeviceZ)
 {
-	#if DIM_MIP_LEVEL_COUNT >= 2
+#if DIM_MIP_LEVEL_COUNT >= 2
 	if (MipLevel == 1)
 	{	
 		FurthestHZBOutput_1[OutputPixelPos] = FurthestDeviceZ;
 	}
-	#endif
-	#if DIM_MIP_LEVEL_COUNT >= 3
+#endif
+#if DIM_MIP_LEVEL_COUNT >= 3
 	else if (MipLevel == 2)
 	{
 		FurthestHZBOutput_2[OutputPixelPos] = FurthestDeviceZ;
 	}
-	#endif
-	#if DIM_MIP_LEVEL_COUNT >= 4
+#endif
+#if DIM_MIP_LEVEL_COUNT >= 4
 	else if (MipLevel == 3)
 	{
 		FurthestHZBOutput_3[OutputPixelPos] = FurthestDeviceZ;
 	}		
-	#endif
+#endif
 }
 
 [numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
@@ -80,24 +82,24 @@ void HZBBuildCS(
 	uint2 GroupId : SV_GroupID,
 	uint GroupThreadIndex : SV_GroupIndex)
 {
-	#if DIM_MIP_LEVEL_COUNT == 1
+#if DIM_MIP_LEVEL_COUNT == 1
 		uint2 GroupThreadId = uint2(GroupThreadIndex % GROUP_TILE_SIZE, GroupThreadIndex / GROUP_TILE_SIZE);
-	#else
-		uint2 GroupThreadId = InitialTilePixelPositionForReduction2x2(MAX_MIP_BATCH_SIZE - 1, GroupThreadIndex);
-	#endif
+#else
+	uint2 GroupThreadId = InitialTilePixelPositionForReduction2x2(MAX_MIP_BATCH_SIZE - 1, GroupThreadIndex);
+#endif
 
 	uint2 DispatchThreadId = GROUP_TILE_SIZE * GroupId + GroupThreadId;
 
 	float2 BufferUV = (DispatchThreadId + 0.5) * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
-    float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
+	float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
 	
-    float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
+	float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
 
 	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
 	
 	uint2 OutputPixelPos = DispatchThreadId;
 	
-    FurthestHZBOutput[OutputPixelPos] = FurthestDeviceZ;
+	FurthestHZBOutput[OutputPixelPos] = FurthestDeviceZ;
 	
 	#if DIM_MIP_LEVEL_COUNT == 1
 	{
@@ -118,12 +120,14 @@ void HZBBuildCS(
 				GroupMemoryBarrierWithGroupSync();
 
 			BRANCH
+
 			if (GroupThreadIndex < ReduceBankSize)
 			{
 				float4 ParentFurthestDeviceZ;
 				ParentFurthestDeviceZ[0] = FurthestDeviceZ;
 
 				UNROLL
+
 				for (uint i = 1; i < 4; i++)
 				{
 					uint LDSIndex = GroupThreadIndex + i * ReduceBankSize;
@@ -139,6 +143,7 @@ void HZBBuildCS(
 			}
 		}
 	}
-	#endif
+#endif
 }
+
 #endif
