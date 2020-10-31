@@ -21,7 +21,7 @@ struct FMobileHzbSystem {
 	friend class FMobileSceneRenderer;
 
 	static constexpr bool bUseCompute = false;
-	static constexpr uint8 kHZBTestMaxMipmap = 8;
+	static constexpr uint8 kHZBTestMaxMipmap = 9;
 	static constexpr int32 kMaxMipBatchSize = 1;
 
 	static void InitialResource(FRHICommandListImmediate& RHICmdList, FViewInfo& View);

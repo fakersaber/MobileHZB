@@ -5,6 +5,14 @@
 
 #define SL_USE_MOBILEHZB 1
 
+static TAutoConsoleVariable<int32> CVarMobileHzbBuildLevel(
+	TEXT("r.MobileHzbBuildLevel"),
+	FMobileHzbSystem::kHZBTestMaxMipmap,
+	TEXT("Test the Mali Device Build Level"),
+	ECVF_RenderThreadSafe
+);
+
+
 DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Generator"), STAT_CLMM_HZBOcclusionGenerator, STATGROUP_CommandListMarkers);
 DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Submit"), STAT_CLMM_HZBCopyOcclusionSubmit, STATGROUP_CommandListMarkers);
 
@@ -70,8 +78,9 @@ FMobileHzbResource::FMobileHzbResource(FRHICommandListImmediate& RHICmdList, FVi
 
 	const int32 NumMipsX = FMath::Max(FMath::CeilLogTwo(View.ViewRect.Width()) - 1, 1u);
 	const int32 NumMipsY = FMath::Max(FMath::CeilLogTwo(View.ViewRect.Height()) - 1, 1u);
-	int32 NumMips = FMath::Max(NumMipsX, NumMipsY);
 	HzbSize = FIntPoint(1 << NumMipsX, 1 << NumMipsY);
+	//int32 NumMips = FMath::Min(FMath::Max(NumMipsX, NumMipsY), static_cast<int32>(FMobileHzbSystem::kHZBTestMaxMipmap));
+	int32 NumMips = FMath::Max(NumMipsX, NumMipsY);
 
 	check(FMobileHzbSystem::kHZBTestMaxMipmap <= NumMipsX && FMobileHzbSystem::kHZBTestMaxMipmap <= NumMipsY);
 
@@ -200,7 +209,6 @@ void FMobileHzbSystem::MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList
 
 	const FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
 
-	//因为RT必须是RG资源，所以让RG管理资源
 	FRDGBuilder GraphBuilder(RHICmdList);
 	const auto& SceneTexture = FMobileHzbSystem::bUseCompute ? SceneContext.SceneDepthZ : SceneContext.GetSceneColor();
 	FRDGTextureRef RDGSceneTexutre = GraphBuilder.RegisterExternalTexture(SceneTexture, TEXT("RDGSceneTexture"));
@@ -212,19 +220,37 @@ void FMobileHzbSystem::MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList
 
 	// Reduce the next mips
 	int32 MaxMipBatchSize = FMobileHzbSystem::bUseCompute ? FMobileHzbSystem::kMaxMipBatchSize : 1;
-	for (int32 StartDestMip = MaxMipBatchSize; StartDestMip < RDGFurthestHZBTexture->Desc.NumMips; StartDestMip += MaxMipBatchSize) {
+	for (int32 StartDestMip = MaxMipBatchSize; StartDestMip < /*RDGFurthestHZBTexture->Desc.NumMips*/CVarMobileHzbBuildLevel.GetValueOnRenderThread(); StartDestMip += MaxMipBatchSize) {
 		FRDGTextureSRVRef RDGHzbSrvMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(RDGFurthestHZBTexture, StartDestMip - 1));
 		ReduceMips(RDGHzbSrvMip, RDGFurthestHZBTexture, View, GraphBuilder, StartDestMip);
 	}
 
 	// Update the view.
-	View.HZBMipmap0Size = MobileHzbResourcesPtr->HzbSize;;
+	View.HZBMipmap0Size = MobileHzbResourcesPtr->HzbSize;
 	GraphBuilder.Execute();
 	RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, EResourceTransitionPipeline::EGfxToGfx, MobileHzbResourcesPtr->MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture);
 }
 
 void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, FViewInfo& View) {
 
+	check(FMobileHzbSystem::bUseCompute);
+
+	const FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
+
+	//因为RT必须是RG资源，所以让RG管理资源
+	FRDGBuilder GraphBuilder(RHICmdList);
+	const auto& SceneTexture = SceneContext.SceneDepthZ;
+	FRDGTextureRef RDGSceneTexutre = GraphBuilder.RegisterExternalTexture(SceneTexture, TEXT("RDGSceneTexture"));
+	FRDGTextureSRVRef RDGSceneTexutreMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(RDGSceneTexutre, 0));
+
+	RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, EResourceTransitionPipeline::EGfxToCompute, MobileHzbResourcesPtr->MobileHzbBuffer.UAV);
+	ReduceBuffer(RDGSceneTexutreMip, MobileHzbResourcesPtr->MobileHzbBuffer, View, GraphBuilder, 0);
+
+	// Update the view
+	//#TODO: OcclusionTest也使用CS,这里就可以干掉,再根据动态传入的Query数量动态Dispatch
+	View.HZBMipmap0Size = MobileHzbResourcesPtr->HzbSize;
+	GraphBuilder.Execute();
+	RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, EResourceTransitionPipeline::EComputeToCompute, MobileHzbResourcesPtr->MobileHzbBuffer.UAV);
 }
 
 
@@ -244,6 +270,7 @@ void FMobileSceneRenderer::MobileRenderHZB(FRHICommandListImmediate& RHICmdList)
 		{
 			RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusionGenerator));	
 			FMobileHzbSystem::MobileRasterBuildHZB(RHICmdList, Views[0]);
+			//FMobileHzbSystem::MobileComputeBuildHZB(RHICmdList, Views[0]);
 		}
 
 		//Issuse Hiz Occlusion Query

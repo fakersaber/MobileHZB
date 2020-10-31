@@ -481,6 +481,8 @@ void FOpenGLDynamicRHI::RHICopyToResolveTarget(FRHITexture* SourceTextureRHI, FR
 		glPixelStorei(GL_PACK_ALIGNMENT, 4);
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 		//UE_LOG(LogTemp, Log, TEXT("HZB: CopyTexture: %u"), FPlatformTime::Cycles() - IdleStart);
+
+		GetContextStateForCurrentContext().Framebuffer = (GLuint)-1;
 	}
 	else if (SourceTexture != DestTexture && FOpenGL::SupportsBlitFramebuffer())
 	{
