@@ -16,14 +16,18 @@ void HZBBuildPS
     out float4 OutColor : SV_Target0
 )
 {
+   
 #if FDimSceneDepth
-	float2 BufferUV = SvPosition.xy * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
-    float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
-    float4 SceneDepth = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
-	float FurthestSceneDepth = max(max(SceneDepth.x, SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
-	float FurthestDeviceZ = 1.f / ((FurthestSceneDepth + HZBInvDeviceZToWorldZTransform[3]) * HZBInvDeviceZToWorldZTransform[2]);
-#else
-	
+    #if UseDownResolution
+        float2 UV = floor(SvPosition.xy) * float2(0.00390625, 0.0078125);
+    #else
+	    float2 BufferUV = SvPosition.xy * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
+        float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
+    #endif
+        float4 SceneDepth = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
+	    float FurthestSceneDepth = max(max(SceneDepth.x, SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
+	    float FurthestDeviceZ = 1.f / ((FurthestSceneDepth + HZBInvDeviceZToWorldZTransform[3]) * HZBInvDeviceZToWorldZTransform[2]);
+#else	
 	float4 DeviceZ;
 	const uint2 PixelCoord = floor(SvPosition.xy) * 2;
     DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
@@ -48,27 +52,6 @@ RWBuffer<uint> FurthestHZBOutput;
 
 groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE * GROUP_TILE_SIZE];
 
-void OutputMipLevel(uint MipLevel, uint2 OutputPixelPos, float FurthestDeviceZ)
-{
-#if DIM_MIP_LEVEL_COUNT >= 2
-	if (MipLevel == 1)
-	{	
-		FurthestHZBOutput_1[OutputPixelPos] = FurthestDeviceZ;
-	}
-#endif
-#if DIM_MIP_LEVEL_COUNT >= 3
-	else if (MipLevel == 2)
-	{
-		FurthestHZBOutput_2[OutputPixelPos] = FurthestDeviceZ;
-	}
-#endif
-#if DIM_MIP_LEVEL_COUNT >= 4
-	else if (MipLevel == 3)
-	{
-		FurthestHZBOutput_3[OutputPixelPos] = FurthestDeviceZ;
-	}		
-#endif
-}
 
 [numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
 void HZBBuildCS(uint2 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex, uint2 DispatchThreadId : SV_DispatchThreadID)

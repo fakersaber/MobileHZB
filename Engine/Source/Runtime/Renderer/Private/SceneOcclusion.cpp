@@ -18,12 +18,8 @@
 #include "ShaderParameterStruct.h"
 #include "VisualizeTexture.h"
 
-
-/*-----------------------------------------------------------------------------
-	Globals
------------------------------------------------------------------------------*/
-
-// @StarLight code - BEGIN HZB, Created by YJH
+// @StarLight code - BEGIN HZB Created By YJH
+#include "MobileHZB.h"
 DEFINE_STAT(STAT_MapHZBResults);
 
 DECLARE_CYCLE_STAT(TEXT("HZBOcclusion UpdateTex"), STAT_CLMM_HZBOcclusioUpdateTex, STATGROUP_CommandListMarkers);
@@ -31,7 +27,11 @@ DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Test"), STAT_CLMM_HZBOcclusionTest, STATGR
 DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Copy"), STAT_CLMM_HZBOcclusionCopy, STATGROUP_CommandListMarkers);
 
 #define SL_USE_MOBILEHZB 1
-// @StarLight code - END HZB, Created by YJH
+// @StarLight code - END HZB Created By YJH
+
+/*-----------------------------------------------------------------------------
+	Globals
+-----------------------------------------------------------------------------*/
 
 int32 GAllowPrecomputedVisibility = 1;
 static FAutoConsoleVariableRef CVarAllowPrecomputedVisibility(
@@ -763,6 +763,10 @@ void FHZBOcclusionTester::ReleaseDynamicRHI()
 #if SL_USE_MOBILEHZB
 	GRenderTargetPool.FreeUnusedResource(MobileResultsTextureCPU[0]);
 	GRenderTargetPool.FreeUnusedResource(MobileResultsTextureCPU[1]);
+	GRenderTargetPool.FreeUnusedResource(MobileCenterTexture[0]);
+	GRenderTargetPool.FreeUnusedResource(MobileCenterTexture[1]);
+	GRenderTargetPool.FreeUnusedResource(MobileExtentTexture[0]);
+	GRenderTargetPool.FreeUnusedResource(MobileExtentTexture[1]);
 	MobileFence[0].SafeRelease();
 	MobileFence[1].SafeRelease();
 #else
@@ -835,9 +839,9 @@ void FHZBOcclusionTester::UnmapResults(FRHICommandListImmediate& RHICmdList, uin
 	#else
 		RHICmdList.UnmapStagingSurface(MobileResultsTextureCPU[FrameNumber & 0x1]->GetRenderTargetItem().ShaderResourceTexture);
 	#endif
-	//Set current frame as invalid farame
-	SetInvalidFrameNumber(FrameNumber);
-#else
+		//Set current frame as invalid farame
+		SetInvalidFrameNumber(FrameNumber);
+	#else
 		RHICmdList.UnmapStagingSurface(ResultsTextureCPU->GetRenderTargetItem().ShaderResourceTexture);
 #endif
 		// @StarLight code - END HZB Created By YJH
@@ -1174,7 +1178,7 @@ public:
 		BoundsExtentSampler.Bind(Initializer.ParameterMap, TEXT("BoundsExtentSampler"));
 	}
 
-	void SetParameters(FRHICommandList& RHICmdList, const FViewInfo& View, FRHITexture* BoundsCenter, FRHITexture* BoundsExtent)
+	void SetParameters(FRHICommandList& RHICmdList, const FViewInfo& View, FRHITexture* BoundsCenter, FRHITexture* BoundsExtent, FRHITexture* MobileHzbTexture)
 	{
 		FRHIPixelShader* ShaderRHI = RHICmdList.GetBoundPixelShader();
 
@@ -1184,14 +1188,23 @@ public:
 		 * Defines the maximum number of mipmaps the HZB test is considering
 		 * to avoid memory cache trashing when rendering on high resolution.
 		 */
-		const float kHZBTestMaxMipmap = 9.0f;
 
-		const float HZBMipmapCounts = FMath::Log2(FMath::Max(View.HZBMipmap0Size.X, View.HZBMipmap0Size.Y));
-		const FVector HZBUvFactorValue(
-			float(View.ViewRect.Width()) / float(2 * View.HZBMipmap0Size.X),
-			float(View.ViewRect.Height()) / float(2 * View.HZBMipmap0Size.Y),
-			FMath::Max(HZBMipmapCounts - kHZBTestMaxMipmap, 0.0f)
-		);
+
+		FVector HZBUvFactorValue = FVector::ZeroVector;
+		static const auto bUseHzbLow = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHZBUseLow"));
+		if (bUseHzbLow->GetValueOnRenderThread() != 0) {
+			HZBUvFactorValue = FVector(1.f, 1.f, 0.f);
+		}
+		else {
+			static const auto MobileBuildLevel = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHzbBuildLevel"));
+			const int32 HZBMipmapCounts = FMath::CeilLogTwo(FMath::Max(View.HZBMipmap0Size.X, View.HZBMipmap0Size.Y));
+			HZBUvFactorValue = FVector(
+				float(View.ViewRect.Width()) / float(2 * View.HZBMipmap0Size.X), 
+				float(View.ViewRect.Height()) / float(2 * View.HZBMipmap0Size.Y), 
+				HZBMipmapCounts - MobileBuildLevel->GetValueOnRenderThread()
+			);
+		}
+
 		const FVector4 HZBSizeValue(
 			View.HZBMipmap0Size.X,
 			View.HZBMipmap0Size.Y,
@@ -1201,8 +1214,7 @@ public:
 		SetShaderValue(RHICmdList, ShaderRHI, HZBUvFactor, HZBUvFactorValue);
 		SetShaderValue(RHICmdList, ShaderRHI, HZBSize, HZBSizeValue);
 
-		SetTextureParameter(RHICmdList, ShaderRHI, HZBTexture, HZBSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), View.HZB->GetRenderTargetItem().ShaderResourceTexture);
-
+		SetTextureParameter(RHICmdList, ShaderRHI, HZBTexture, HZBSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), MobileHzbTexture);
 		SetTextureParameter(RHICmdList, ShaderRHI, BoundsCenterTexture, BoundsCenterSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), BoundsCenter);
 		SetTextureParameter(RHICmdList, ShaderRHI, BoundsExtentTexture, BoundsExtentSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), BoundsExtent);
 	}
@@ -1223,7 +1235,7 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 	//Update Data
 	WriteOccludedData(RHICmdList, CurTestIndex);
 
-#if PLATFORM_MAC || PLATFORM_WINDOWS
+#if !PLATFORM_IOS && !PLATFORM_ANDROID
 	TRefCountPtr< IPooledRenderTarget >	ResultsTextureGPU;
 	{
 		FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(MobileSizeX, MobileSizeY), PF_B8G8R8A8, FClearValueBinding::None, TexCreate_None, TexCreate_ShaderResource | TexCreate_RenderTargetable, false));
@@ -1246,7 +1258,7 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 		FRHIRenderPassInfo RPInfo(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, ERenderTargetActions::DontLoad_Store);
 		RHICmdList.TransitionResource(EResourceTransitionAccess::EWritable, ResultsTextureGPU->GetRenderTargetItem().TargetableTexture);
 #endif
-			
+
 		RHICmdList.BeginRenderPass(RPInfo, TEXT("TestHZB"));
 		{
 			FGraphicsPipelineStateInitializer GraphicsPSOInit;
@@ -1265,10 +1277,17 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 
 			SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit);
 
+#if SL_USE_MOBILEHZB
+			FTextureRHIRef MobileHZBTexture = FMobileHzbSystem::MobileHzbResourcesPtr.MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture;
+#else
+			FTextureRHIRef MobileHZBTexture = View.HZB->GetRenderTargetItem().ShaderResourceTexture;
+#endif
+
 			PixelShader->SetParameters(
-				RHICmdList, View, 
+				RHICmdList, View,
 				MobileCenterTexture[CurTestIndex]->GetRenderTargetItem().ShaderResourceTexture,
-				MobileExtentTexture[CurTestIndex]->GetRenderTargetItem().ShaderResourceTexture
+				MobileExtentTexture[CurTestIndex]->GetRenderTargetItem().ShaderResourceTexture,
+				MobileHZBTexture
 			);
 
 			RHICmdList.SetViewport(0, 0, 0.0f, MobileSizeX, MobileSizeY, 1.0f);
@@ -1292,15 +1311,15 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 		RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusionCopy));
 
 		//PC平台显存与内存分开
-#if PLATFORM_MAC || PLATFORM_WINDOWS
+#if !PLATFORM_IOS && !PLATFORM_ANDROID
 		RHICmdList.TransitionResource(EResourceTransitionAccess::EReadable, ResultsTextureGPU->GetRenderTargetItem().TargetableTexture);
 		RHICmdList.TransitionResource(EResourceTransitionAccess::EWritable, MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture);
 		RHICmdList.CopyToResolveTarget(ResultsTextureGPU->GetRenderTargetItem().TargetableTexture, MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture, FResolveParams());
 #elif PLATFORM_ANDROID
 		//Currently GLESRHI has been processed
 		RHICmdList.CopyToResolveTarget(
-			MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture, 
-			MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture, 
+			MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture,
+			MobileResultsTextureCPU[CurFrameIndex]->GetRenderTargetItem().ShaderResourceTexture,
 			FResolveParams()
 		);
 #endif
@@ -1311,7 +1330,7 @@ void FHZBOcclusionTester::MobileSubmit(FRHICommandListImmediate& RHICmdList, con
 
 
 //mobile only uses UpdateTexture once{
-void FHZBOcclusionTester::WriteOccludedData(FRHICommandListImmediate& RHICmdList, uint32 CurFrameIndex){
+void FHZBOcclusionTester::WriteOccludedData(FRHICommandListImmediate& RHICmdList, uint32 CurFrameIndex) {
 
 	RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusioUpdateTex));
 

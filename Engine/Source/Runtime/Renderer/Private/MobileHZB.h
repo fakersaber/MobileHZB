@@ -5,9 +5,13 @@
 class FViewInfo;
 class FRDGBuilder; 
 
-struct FMobileHzbResource{
-	FMobileHzbResource(FRHICommandListImmediate& RHICmdList, FViewInfo& View);
-	~FMobileHzbResource();
+struct FMobileHzbResource : public FRenderResource {
+	FMobileHzbResource() { }
+	~FMobileHzbResource() { };
+
+	virtual void InitDynamicRHI() override; 
+	virtual void ReleaseDynamicRHI() override;
+	
 
 	FRWBuffer MobileHzbBuffer;
 	TRefCountPtr<IPooledRenderTarget> MobileHZBTexture;
@@ -20,12 +24,11 @@ struct FMobileHzbSystem {
 	friend class FHZBOcclusionTester;
 	friend class FMobileSceneRenderer;
 
-	static constexpr bool bUseCompute = false;
-	static constexpr uint8 kHZBTestMaxMipmap = 9;
+	static constexpr bool bUseRaster = true;
+	static constexpr uint8 kHZBTestMaxMipmap = 8;
 	static constexpr int32 kMaxMipBatchSize = 1;
 
 	static void InitialResource(FRHICommandListImmediate& RHICmdList, FViewInfo& View);
-	static void ReleaseResource();
 
 	static void ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRef RDGFurthestHZBTexture, FViewInfo& View, FRDGBuilder& GraphBuilder, uint32 CurOutHzbMipLevel);
 	static void MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList, FViewInfo& View);
@@ -34,5 +37,5 @@ struct FMobileHzbSystem {
 	static void MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, FViewInfo& View);
 
 private:
-	static TUniquePtr<FMobileHzbResource> MobileHzbResourcesPtr;
+	static TGlobalResource<FMobileHzbResource> MobileHzbResourcesPtr;
 };
