@@ -1,0 +1,92 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+
+Texture2D HZBTexture;
+SamplerState HZBSampler;
+Texture2D BoundsCenterTexture;
+SamplerState BoundsCenterSampler;
+Texture2D BoundsExtentTexture;
+SamplerState BoundsExtentSampler;
+
+float3 SLPreViewTranslation;
+float4x4 SLTranslatedWorldToClip;
+
+void HZBTestPS(float2 InUV : TEXCOORD0, out float4 OutColor : SV_Target0)
+{
+
+    float4 BoundsCenter = BoundsCenterTexture.SampleLevel(BoundsCenterSampler, InUV, 0);
+    float4 BoundsExtent = BoundsExtentTexture.SampleLevel(BoundsExtentSampler, InUV, 0);
+      
+    BoundsCenter.xyz += SLPreViewTranslation;
+
+    BRANCH
+    if (BoundsExtent.w == 0)
+    {
+        OutColor = float4(1, 0, 0, 0);
+        return;
+    }
+
+    
+    float3 BoundsMin = BoundsCenter.xyz - BoundsExtent.xyz;
+    float3 BoundsMax = BoundsCenter.xyz + BoundsExtent.xyz;
+    float3 Bounds[2] = { BoundsMin, BoundsMax };
+	
+	// Screen rect from bounds
+    float3 RectMin = float3(1, 1, 1);
+    float3 RectMax = float3(-1, -1, -1);
+    UNROLL
+    for (int i = 0; i < 8; i++)
+    {
+        float3 PointSrc;
+        PointSrc.x = Bounds[(i >> 0) & 1].x;
+        PointSrc.y = Bounds[(i >> 1) & 1].y;
+        PointSrc.z = Bounds[(i >> 2) & 1].z;
+
+        float4 PointClip = mul(float4(PointSrc, 1), SLTranslatedWorldToClip);
+        float3 PointScreen = PointClip.xyz / PointClip.w;
+
+        RectMin = min(RectMin, PointScreen);
+        RectMax = max(RectMax, PointScreen);
+    }
+
+
+	// 反向映射过后的y注意交换顺序
+    float4 Rect = saturate(float4(RectMin.xy, RectMax.xy) * float2(0.5, -0.5).xyxy + 0.5).xwzy;
+    float4 RectPixels = Rect * float4(256.f, 128.f, 256.f, 128.f);
+    float2 RectSize = (RectPixels.zw - RectPixels.xy) * 0.5; // + 0.001
+    float Level = min(max(ceil(log2(max(RectSize.x, RectSize.y))), 0.f), 7.f);
+
+    
+	// Check if we can drop one level lower
+    //如果高一级任然低于4个像素那么使用低一级--对于低分辨率来说是不必要的
+    //float LevelLower = max(Level - 1, 0);
+    //float4 LowerRect = RectPixels * exp2(-LevelLower);
+    //float2 LowerRectSize = ceil(LowerRect.zw) - floor(LowerRect.xy);
+    //if (all(LowerRectSize <= 4)){
+    //    Level = LevelLower;
+    //}
+
+
+	// 4x4 samples
+    float2 Scale = (Rect.zw - Rect.xy) / 3;
+    float2 Bias =  Rect.xy;
+
+    float4 MinDepth = 1;
+    UNROLL
+    for (int i = 0; i < 4; i++)
+    {
+		// TODO could vectorize this
+        float4 Depth;
+        Depth.x = HZBTexture.SampleLevel(HZBSampler, float2(i, 0) * Scale + Bias, Level).r;
+        Depth.y = HZBTexture.SampleLevel(HZBSampler, float2(i, 1) * Scale + Bias, Level).r;
+        Depth.z = HZBTexture.SampleLevel(HZBSampler, float2(i, 2) * Scale + Bias, Level).r;
+        Depth.w = HZBTexture.SampleLevel(HZBSampler, float2(i, 3) * Scale + Bias, Level).r;
+        MinDepth = min(MinDepth, Depth);
+    }
+    MinDepth.x = min(min(MinDepth.x, MinDepth.y), min(MinDepth.z, MinDepth.w));
+
+	// Inverted Z buffer
+    OutColor = RectMax.z >= MinDepth.x ? 1 : 0;
+
+}

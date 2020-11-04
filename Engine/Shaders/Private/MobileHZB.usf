@@ -1,10 +1,8 @@
 #include "Common.ush"
 #include "ReductionCommon.ush"
 
-float4 DispatchThreadIdToBufferUV;
+
 float4 HZBInvDeviceZToWorldZTransform;
-float2 InvSize;
-float2 InputViewportMaxBound;
 
 Texture2D ParentTextureMip;
 SamplerState ParentTextureMipSampler;
@@ -16,14 +14,18 @@ void HZBBuildPS
     out float4 OutColor : SV_Target0
 )
 {
+   
 #if FDimSceneDepth
-	float2 BufferUV = SvPosition.xy * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
-    float2 UV = min(BufferUV + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
-    float4 SceneDepth = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
-	float FurthestSceneDepth = max(max(SceneDepth.x, SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
-	float FurthestDeviceZ = 1.f / ((FurthestSceneDepth + HZBInvDeviceZToWorldZTransform[3]) * HZBInvDeviceZToWorldZTransform[2]);
-#else
-	
+    float2 UV = floor(SvPosition.xy) * float2(0.00390625, 0.0078125);
+	#if UseSceneDepth
+		float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
+		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
+	#else
+	    float4 SceneDepth = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
+		float FurthestSceneDepth = max(max(SceneDepth.x, SceneDepth.y), max(SceneDepth.z, SceneDepth.w));
+		float FurthestDeviceZ = 1.f / ((FurthestSceneDepth + HZBInvDeviceZToWorldZTransform[3]) * HZBInvDeviceZToWorldZTransform[2]);
+	#endif
+#else	
 	float4 DeviceZ;
 	const uint2 PixelCoord = floor(SvPosition.xy) * 2;
     DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
@@ -48,48 +50,25 @@ RWBuffer<uint> FurthestHZBOutput;
 
 groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE * GROUP_TILE_SIZE];
 
-void OutputMipLevel(uint MipLevel, uint2 OutputPixelPos, float FurthestDeviceZ)
-{
-#if DIM_MIP_LEVEL_COUNT >= 2
-	if (MipLevel == 1)
-	{	
-		FurthestHZBOutput_1[OutputPixelPos] = FurthestDeviceZ;
-	}
-#endif
-#if DIM_MIP_LEVEL_COUNT >= 3
-	else if (MipLevel == 2)
-	{
-		FurthestHZBOutput_2[OutputPixelPos] = FurthestDeviceZ;
-	}
-#endif
-#if DIM_MIP_LEVEL_COUNT >= 4
-	else if (MipLevel == 3)
-	{
-		FurthestHZBOutput_3[OutputPixelPos] = FurthestDeviceZ;
-	}		
-#endif
-}
 
 [numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
 void HZBBuildCS(uint2 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex, uint2 DispatchThreadId : SV_DispatchThreadID)
 {
-    uint BufferIndex = DispatchThreadId.x + DispatchThreadId.y * 512;
+ //   uint BufferIndex = DispatchThreadId.x + DispatchThreadId.y * 512;
 	
-    uint2 CurIndex_0 = DispatchThreadId * 2;
-    float2 BufferUV_0 = (CurIndex_0 + 0.5) * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
-	float2 UV_0 = min(BufferUV_0 + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);  
-    float4 DeviceZ_0 = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV_0, 0);
-    float FurthestDeviceZ_0 = min(min(DeviceZ_0.x, DeviceZ_0.y), min(DeviceZ_0.z, DeviceZ_0.w));	
+ //   uint2 CurIndex_0 = DispatchThreadId * 2;
+ //   float2 BufferUV_0 = (CurIndex_0 + 0.5) * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
+	//float2 UV_0 = min(BufferUV_0 + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);  
+ //   float4 DeviceZ_0 = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV_0, 0);
+ //   float FurthestDeviceZ_0 = min(min(DeviceZ_0.x, DeviceZ_0.y), min(DeviceZ_0.z, DeviceZ_0.w));	
 		
 	
-    uint2 CurIndex_1 = DispatchThreadId * 2 + uint2(1, 0);
-    float2 BufferUV_1 = (CurIndex_1 + 0.5) * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
-    float2 UV_1 = min(BufferUV_1 + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
-    float4 DeviceZ_1 = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV_1, 0);
-    float FurthestDeviceZ_1 = min(min(DeviceZ_1.x, DeviceZ_1.y), min(DeviceZ_1.z, DeviceZ_1.w));
-	
-	
-    FurthestHZBOutput[BufferIndex] = f32tof16(FurthestDeviceZ_0) | (f32tof16(FurthestDeviceZ_1) << 16);
+ //   uint2 CurIndex_1 = DispatchThreadId * 2 + uint2(1, 0);
+ //   float2 BufferUV_1 = (CurIndex_1 + 0.5) * DispatchThreadIdToBufferUV.xy + DispatchThreadIdToBufferUV.zw;
+ //   float2 UV_1 = min(BufferUV_1 + float2(-0.25f, -0.25f) * InvSize, InputViewportMaxBound - InvSize);
+ //   float4 DeviceZ_1 = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV_1, 0);
+ //   float FurthestDeviceZ_1 = min(min(DeviceZ_1.x, DeviceZ_1.y), min(DeviceZ_1.z, DeviceZ_1.w));
+    //FurthestHZBOutput[BufferIndex] = f32tof16(FurthestDeviceZ_0) | (f32tof16(FurthestDeviceZ_1) << 16);
 }
 
 #endif
