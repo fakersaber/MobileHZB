@@ -50,6 +50,12 @@
 #include "VisualizeTexture.h"
 #include "VT/VirtualTextureSystem.h"
 #include "GPUSortManager.h"
+#include "VolumetricCloudMobile.h"
+
+//@StarLight code - BEGIN GPU-Driven, Added by yanjianhong
+#include "MobileHZB.h"
+#include "MobileGPUDrivenRendering.h"
+//@StarLight code - END GPU-Driven, Added by yanjianhong
 
 uint32 GetShadowQuality();
 
@@ -283,6 +289,15 @@ void FMobileSceneRenderer::InitViews(FRHICommandListImmediate& RHICmdList)
 	const FExclusiveDepthStencil::Type BasePassDepthStencilAccess = FExclusiveDepthStencil::DepthWrite_StencilWrite;
 
 	PreVisibilityFrameSetup(RHICmdList);
+
+	//@StarLight code - BEGIN GPU-Driven, Added by yanjianhong
+	
+	if (bUseMobileGpuDriven()) {
+		FMobileHzbSystem::InitialResource();
+		MobileGPUCulling(RHICmdList);
+	}
+	//@StarLight code - END GPU-Driven, Added by yanjianhong
+
 	ComputeViewVisibility(RHICmdList, BasePassDepthStencilAccess, ViewCommandsPerView, DynamicIndexBuffer, DynamicVertexBuffer, DynamicReadBuffer);
 
 	// Initialise Sky/View resources before the view global uniform buffer is built.
@@ -396,6 +411,10 @@ void FMobileSceneRenderer::InitViews(FRHICommandListImmediate& RHICmdList)
 	// Now that the indirect lighting cache is updated, we can update the uniform buffers.
 	UpdatePrimitiveIndirectLightingCacheBuffers();
 	
+	//@StarLight code -  BEGIN Add rain depth pass, edit by wanghai
+	InitRainDepthRendering(DynamicIndexBuffer, DynamicVertexBuffer, DynamicReadBuffer);
+	//@StarLight code -  END Add rain depth pass, edit by wanghai
+
 	OnStartRender(RHICmdList);
 }
 
@@ -468,7 +487,12 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	// See CVarMobileForceDepthResolve use in ConditionalResolveSceneDepth.
 	const bool bForceDepthResolve = CVarMobileForceDepthResolve.GetValueOnRenderThread() == 1;
 	const bool bSeparateTranslucencyActive = IsMobileSeparateTranslucencyActive(View);
-	bool bKeepDepthContent = bForceDepthResolve || (bRenderToSceneColor &&
+
+	//@StarLight code -  Mobile Volumetric Cloud, Added by zhouningwei
+	const bool bShouldRenderVolumetricCloud = ShouldRenderVolumeCloud(Scene);
+	//@StarLight code -  Mobile Volumetric Cloud, Added by zhouningwei
+
+	bool bKeepDepthContent = bForceDepthResolve || bShouldRenderVolumetricCloud || (bRenderToSceneColor &&
 		(bSeparateTranslucencyActive ||
 			View.bIsReflectionCapture ||
 			(View.bIsSceneCapture && (ViewFamily.SceneCaptureSource == ESceneCaptureSource::SCS_SceneColorHDR || ViewFamily.SceneCaptureSource == ESceneCaptureSource::SCS_SceneColorSceneDepth))));
@@ -561,6 +585,10 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	{
 		RenderCustomDepthPass(RHICmdList);
 	}
+
+	//@StarLight code -  BEGIN Add rain depth pass, edit by wanghai
+	RenderRainDepth(RHICmdList);
+	//@StarLight code -  END Add rain depth pass, edit by wanghai
 
 	//YJH Created 2020-7-19
 	//Whether to RenderDownSample Translucency
@@ -692,16 +720,28 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	RHICmdList.NextSubpass();
 
 	// Split if we need to render translucency in a separate render pass
-	if (bRequiresTranslucencyPass)
+	if (bRequiresTranslucencyPass || bShouldRenderVolumetricCloud)
 	{
 		RHICmdList.EndRenderPass();
 	}
+
+	//@StarLight code -  Mobile Volumetric Cloud, Added by zhouningwei
+	if (bShouldRenderVolumetricCloud)
+	{
+		InitVolumetricCloudView(RHICmdList, View);
+		PrecomputeVolumetricCloud(RHICmdList, Scene, View);
+		HalfResDepthSurfaceCheckerboardMinMax(RHICmdList, View);
+		RenderVolumetricCloud(RHICmdList, View);
+		ReconstructVolumetricCloud(RHICmdList, View);
+		ComposeVolumetricCloudToScene(RHICmdList, View);
+	}
+	//@StarLight code -  Mobile Volumetric Cloud, Added by zhouningwei
 
 	RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_Translucency));
 
 
 	// Restart translucency render pass if needed
-	if (bRequiresTranslucencyPass)
+	if (bRequiresTranslucencyPass || bShouldRenderVolumetricCloud)
 	{
 		check(RHICmdList.IsOutsideRenderPass());
 
@@ -782,13 +822,19 @@ void FMobileSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 	// End of scene color rendering
 	RHICmdList.EndRenderPass();
 
-	// @StarLight code - BEGIN HZB Created By YJH
-	if(DoHZBOcclusion())
-	{
+	//@StarLight code - GPU-Driven, Added by yanjianhong
+	if (bUseMobileGpuDriven()) {
+		MobileBuildHzb(RHICmdList);
+	}
+	//@StarLight code - GPU-Driven, Added by yanjianhong
+
+	// @StarLight code - BEGIN HZB Created By yanjianhong
+	if (DoHZBOcclusion() && FMobileHzbSystem::bUseRaster) {
 		// Hint to the RHI to submit commands up to this point to the GPU if possible.  Can help avoid CPU stalls next frame waiting
 		// for these query results on some platforms.
-		RHICmdList.SetCurrentStat(GET_STATID(STAT_CLMM_HZBOcclusion));
-		MobileRenderHZB(RHICmdList);
+		FMobileHzbSystem::InitialResource();
+		MobileBuildHzb(RHICmdList);
+		MobileSubmitHzb(RHICmdList);
 		RHICmdList.SubmitCommandsHint();
 		bSubmitOffscreenRendering = false; // submit once
 		RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
