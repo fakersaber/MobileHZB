@@ -33,6 +33,8 @@ DECLARE_CYCLE_STAT(TEXT("HZBOcclusion Submit"), STAT_CLMM_HZBCopyOcclusionSubmit
 TMap<uint32, TUniquePtr<FMobileHzbSystem>> FMobileHzbSystem::ViewUniqueId2HzbSystemMap;
 
 BEGIN_SHADER_PARAMETER_STRUCT(FMobileHZBParameters, )
+	SHADER_PARAMETER(FVector2D, ParentTextureInvSize)
+	SHADER_PARAMETER(FIntPoint, ViewRectSizeMinsOne)
 	SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, ParentTextureMip)
 	SHADER_PARAMETER_SAMPLER(SamplerState, ParentTextureMipSampler)
 END_SHADER_PARAMETER_STRUCT()
@@ -71,10 +73,11 @@ void FMobileHzbSystem::ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRe
 
 	FMobileHZBParameters ShaderParameters;
 
+	ShaderParameters.ParentTextureInvSize = FVector2D(1.f / SrcSize.X, 1.f / SrcSize.Y);
+	ShaderParameters.ViewRectSizeMinsOne = CurOutHzbMipLevel == 0 ? (View.ViewRect.Size() - FIntPoint(1, 1)) : (SrcSize - FIntPoint(1, 1));
 	ShaderParameters.ParentTextureMip = RDGTexutreMip;
 	ShaderParameters.ParentTextureMipSampler = TStaticSamplerState<SF_Point>::GetRHI();
-
-
+	
 	FMobileHZBBuildPS::FParameters* PassParameters = GraphBuilder.AllocParameters<FMobileHZBBuildPS::FParameters>();
 	PassParameters->Shared = ShaderParameters;
 	PassParameters->RenderTargets[0] = FRenderTargetBinding(RDGFurthestHZBTexture, ERenderTargetLoadAction::ENoAction, CurOutHzbMipLevel);
@@ -101,7 +104,13 @@ void FMobileHzbSystem::MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList
 	const FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
 
 	FRDGBuilder GraphBuilder(RHICmdList);
-	const auto& SceneTexture = SceneContext.GetSceneColor();
+	TRefCountPtr<IPooledRenderTarget> SceneTexture;
+	if (CVarMobileUseSceneDepth.GetValueOnAnyThread() != 0) {
+		SceneTexture = SceneContext.SceneDepthZ;	
+	}
+	else {
+		SceneTexture = SceneContext.GetSceneColor();
+	}
 
 	FRDGTextureRef RDGSceneTexutre = GraphBuilder.RegisterExternalTexture(SceneTexture, TEXT("RDGSceneTexture"));
 	FRDGTextureSRVRef RDGSceneTexutreMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(RDGSceneTexutre, 0));
@@ -111,8 +120,7 @@ void FMobileHzbSystem::MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList
 	ReduceMips(RDGSceneTexutreMip, RDGFurthestHZBTexture, View, GraphBuilder, 0);
 
 	// Reduce the next mips
-	int32 MaxMipBatchSize = 1;
-	for (int32 StartDestMip = MaxMipBatchSize; StartDestMip < RDGFurthestHZBTexture->Desc.NumMips; StartDestMip += MaxMipBatchSize) {
+	for (int32 StartDestMip = 1; StartDestMip < RDGFurthestHZBTexture->Desc.NumMips; StartDestMip += 1) {
 		FRDGTextureSRVRef RDGHzbSrvMip = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(RDGFurthestHZBTexture, StartDestMip - 1));
 		ReduceMips(RDGHzbSrvMip, RDGFurthestHZBTexture, View, GraphBuilder, StartDestMip);
 	}
@@ -239,7 +247,8 @@ void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdLis
 }
 
 FMobileHzbSystem::FMobileHzbSystem() 
-	: HzbSize(FIntPoint::ZeroValue)
+	: NumMips(0)
+	, HzbSize(FIntPoint::ZeroValue)
 {
 	//不想每次创建就马上创建RHI资源,单独放在Render函数中
 }
@@ -268,23 +277,33 @@ FMobileHzbSystem* FMobileHzbSystem::GetHzbSystemByViewStateUniqueId(const FScene
 	return nullptr;
 }
 
-void FMobileHzbSystem::InitGPUResources() {
+void FMobileHzbSystem::InitGPUResources(FViewInfo& View) {
 
 	if(FMobileHzbSystem::bUseRaster && HzbSize == FIntPoint::ZeroValue) {
 		FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
 
-		HzbSize = FIntPoint(FMobileHzbSystem::kHzbTexWidth, FMobileHzbSystem::kHzbTexHeight);
-		int32 NumMips = FMobileHzbSystem::kHZBMaxMipmap;
+		if constexpr (bUseFullResolution) {
+			const int32 NumMipsX = FMath::Max(FPlatformMath::CeilToInt(FMath::Log2(float(View.ViewRect.Width()))) - 1, 1);
+			const int32 NumMipsY = FMath::Max(FPlatformMath::CeilToInt(FMath::Log2(float(View.ViewRect.Height()))) - 1, 1);
+			NumMips = FMath::Max(NumMipsX, NumMipsY);
+			HzbSize = FIntPoint(1 << NumMipsX, 1 << NumMipsY);	// Must be power of 2
+		}
+		else {
+			NumMips = FMobileHzbSystem::kHZBMaxMipmap;
+			HzbSize = FIntPoint(FMobileHzbSystem::kHzbTexWidth, FMobileHzbSystem::kHzbTexHeight);
+		}
+
 		//CreateResource
 		FPooledRenderTargetDesc MobileHZBFurthestDesc = FPooledRenderTargetDesc::Create2DDesc(
 			HzbSize,
 			PF_R16F,
-			FClearValueBinding::None, TexCreate_HideInVisualizeTexture, TexCreate_ShaderResource | TexCreate_RenderTargetable, false, NumMips);
-#if SL_USE_MOBILEHZB
+			FClearValueBinding::None, TexCreate_HideInVisualizeTexture, 
+			TexCreate_ShaderResource | TexCreate_RenderTargetable, 
+			/*bInForceSeparateTargetAndShaderResource*/ false,
+			NumMips
+		);
+
 		GRenderTargetPool.FindFreeElement(RHICmdList, MobileHZBFurthestDesc, MobileHZBTexture, TEXT("MobileHZBFurthest"), ERenderTargetTransience::NonTransient);
-#else
-		GRenderTargetPool.FindFreeElement(RHICmdList, MobileHZBFurthestDesc, View.HZB, TEXT("MobileHZBFurthest"), ERenderTargetTransience::NonTransient);
-#endif
 		return;
 	}
 

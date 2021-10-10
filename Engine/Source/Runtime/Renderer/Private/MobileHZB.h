@@ -19,12 +19,13 @@ struct FMobileHzbSystem {
 	static void UnRegisterViewStateToSystem(const uint32 SceneViewStateUniqueID);
 
 	static FMobileHzbSystem* GetHzbSystemByViewStateUniqueId(const FSceneViewState* ViewStatePtr);
-	void InitGPUResources();
+	void InitGPUResources(FViewInfo& View);
 	void ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRef RDGFurthestHZBTexture, const FViewInfo& View, FRDGBuilder& GraphBuilder, uint32 CurOutHzbMipLevel);
 	void MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
 	void MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
 	const FRWBufferStructured& GetStructuredBufferRes() { return MobileHZBBuffer_GPU; }
 	
+	uint32 NumMips;
 	FIntPoint HzbSize;
 	FRWBufferStructured MobileHZBBuffer_GPU;
 	TRefCountPtr<IPooledRenderTarget> MobileHZBTexture;
@@ -44,5 +45,7 @@ struct FMobileHzbSystem {
 	static constexpr int32 kHzbTexHeight = 256;
 	static constexpr uint8 kHZBMaxMipmap = 9;
 #endif
-	static constexpr bool bUseRaster = false;
+
+	static constexpr bool bUseRaster = true;
+	static constexpr bool bUseFullResolution = true;
 };

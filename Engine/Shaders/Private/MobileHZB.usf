@@ -1,39 +1,50 @@
 #include "Common.ush"
 #include "ReductionCommon.ush"
-
-
-
-
-#if PIXELSHADER
-
+	
 Texture2D ParentTextureMip;
 SamplerState ParentTextureMipSampler;
 
+float2 ParentTextureInvSize;
+uint2 ViewRectSizeMinsOne;
+
+#if PIXELSHADER
 void HZBBuildPS
 (
     float4 SvPosition : SV_POSITION, 
     out float4 OutColor : SV_Target0
 )
 {
-   
-#if FDimSceneDepth
-    float2 UV = floor(SvPosition.xy) * float2(0.00390625, 0.0078125);
-	#if UseSceneDepth
-		float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
-		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-	#else
-	    float4 DeviceZ = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
-		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-	#endif
-#else	
-	float4 DeviceZ;
-	const uint2 PixelCoord = floor(SvPosition.xy) * 2;
-    DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
-    DeviceZ.y = ParentTextureMip.Load(int3(PixelCoord + int2(0, 1), 0));
-    DeviceZ.z = ParentTextureMip.Load(int3(PixelCoord + int2(1, 0), 0));
-    DeviceZ.w = ParentTextureMip.Load(int3(PixelCoord + int2(1, 1), 0));
-	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
+    float4 DeviceZ;
+	//直接求对应父贴图中心点位置, 然后GatherTexture全采样. 
+	//同时防止采样ViewRect外的Pixel, 先加因为Gather会自动偏移像素
+    const uint2 PixelCoord = min(floor(SvPosition.xy) * 2 + uint2(1, 1), ViewRectSizeMinsOne) ;
+    float2 UV = ParentTextureInvSize * PixelCoord;
+#if UseSceneDepth
+    DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
+#else
+    DeviceZ = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
 #endif
+    float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
+	
+
+//#if FDimSceneDepth
+//    float2 UV = floor(SvPosition.xy) * float2(0.00390625, 0.0078125);
+//	#if UseSceneDepth
+//		float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
+//		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
+//	#else
+//	    float4 DeviceZ = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
+//		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
+//	#endif
+//#else	
+//	float4 DeviceZ;
+//	const uint2 PixelCoord = floor(SvPosition.xy) * 2;
+//    DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
+//    DeviceZ.y = ParentTextureMip.Load(int3(PixelCoord + int2(0, 1), 0));
+//    DeviceZ.z = ParentTextureMip.Load(int3(PixelCoord + int2(1, 0), 0));
+//    DeviceZ.w = ParentTextureMip.Load(int3(PixelCoord + int2(1, 1), 0));
+//	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
+//#endif
 	
     OutColor = FurthestDeviceZ;
 }
@@ -198,7 +209,7 @@ void HZBBuildCSLevelOne(
     }
 }
 
-#else
+#elif 0
 
 #define GROUP_TILE_SIZE 16
 groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE][GROUP_TILE_SIZE];
@@ -377,5 +388,4 @@ void HZBBuildCSLevelOne(
 		HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L3;
 	}
 }
-
 #endif
