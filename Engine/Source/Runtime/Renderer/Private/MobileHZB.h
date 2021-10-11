@@ -23,8 +23,9 @@ struct FMobileHzbSystem {
 	void ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRef RDGFurthestHZBTexture, const FViewInfo& View, FRDGBuilder& GraphBuilder, uint32 CurOutHzbMipLevel);
 	void MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
 	void MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
-	const FRWBufferStructured& GetStructuredBufferRes() { return MobileHZBBuffer_GPU; }
-	
+	const FRWBufferStructured& GetStructuredBufferRes() const { return MobileHZBBuffer_GPU; }
+	const FTextureRHIRef GetTextureRes() const { return MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture; }
+
 	uint32 NumMips;
 	FIntPoint HzbSize;
 	FRWBufferStructured MobileHZBBuffer_GPU;
