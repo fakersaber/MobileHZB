@@ -7,7 +7,7 @@
 
 TAutoConsoleVariable<int32> CVarMobileUseRaster(
 	TEXT("r.GpuDriven.MobileUseRaster"),
-	FMobileHzbSystem::bUseRaster,
+	FMobileHzbSystem::bUsePixelShader,
 	TEXT("Test Mali Device Raster"),
 	ECVF_RenderThreadSafe
 );
@@ -61,8 +61,6 @@ class FMobileHZBBuildPS : public FGlobalShader
 	}
 
 };
-
-IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildPS, "/Engine/Private/MobileHZB.usf", "HZBBuildPS", SF_Pixel);
 	
 void FMobileHzbSystem::ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRef RDGFurthestHZBTexture, const FViewInfo& View, FRDGBuilder& GraphBuilder, uint32 CurOutHzbMipLevel) {
 
@@ -74,7 +72,7 @@ void FMobileHzbSystem::ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRe
 	FMobileHZBParameters ShaderParameters;
 
 	ShaderParameters.ParentTextureInvSize = FVector2D(1.f / SrcSize.X, 1.f / SrcSize.Y);
-	ShaderParameters.ViewRectSizeMinsOne = CurOutHzbMipLevel == 0 ? (View.ViewRect.Size() - FIntPoint(1, 1)) : (SrcSize - FIntPoint(1, 1));
+	ShaderParameters.ViewRectSizeMinsOne = CurOutHzbMipLevel == 0 ? View.ViewRect.Size() - FIntPoint(1, 1) : SrcSize - FIntPoint(1, 1);
 	ShaderParameters.ParentTextureMip = RDGTexutreMip;
 	ShaderParameters.ParentTextureMipSampler = TStaticSamplerState<SF_Point>::GetRHI();
 	
@@ -85,7 +83,6 @@ void FMobileHzbSystem::ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRe
 	FMobileHZBBuildPS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FMobileHZBBuildPS::FDimSceneDepth>(CurOutHzbMipLevel == 0);  //use SceneTexture Only Mipmap is 0 
 	PermutationVector.Set<FMobileHZBBuildPS::FUseSceneDepth>(CVarMobileUseSceneDepth.GetValueOnAnyThread() != 0);
-	
 
 	TShaderMapRef<FMobileHZBBuildPS> PixelShader(View.ShaderMap, PermutationVector);
 
@@ -203,46 +200,191 @@ private:
 	LAYOUT_FIELD(FShaderResourceParameter, HzbStructuredBufferUAV);
 };
 
-IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildCSLevel0, "/Engine/Private/MobileHZB.usf", "HZBBuildCSLevelZero", SF_Compute);
-IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildCSLevel1, "/Engine/Private/MobileHZB.usf", "HZBBuildCSLevelOne", SF_Compute);
+class FMobileTextureBuildCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FMobileTextureBuildCS);
 
-void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View) {
+	class FDimMipLevelCount : SHADER_PERMUTATION_RANGE_INT("DIM_MIP_LEVEL_COUNT", 1, FMobileHzbSystem::ComputeShaderBuildBatch);
+	using FPermutationDomain = TShaderPermutationDomain<FDimMipLevelCount>;
 
-	//Level0
-	{
-		const FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
-
-		if (CVarMobileUseSceneDepth.GetValueOnAnyThread() != 0) {
-			const auto& SceneTexture = SceneContext.SceneDepthZ->GetRenderTargetItem().ShaderResourceTexture;
-			constexpr auto DispatchX = FMobileHzbSystem::kHzbTexWidth / GroupSizeX;
-			constexpr auto DispatchY = FMobileHzbSystem::kHzbTexHeight / GroupSizeY;
-			TShaderMapRef<FMobileHZBBuildCSLevel0> HzbGeneratorShader(View.ShaderMap);
-			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
-			HzbGeneratorShader->BindParameters(RHICmdList, View, SceneTexture, MobileHZBBuffer_GPU);
-			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
-			HzbGeneratorShader->UnBindParameters(RHICmdList);
-		}
-		else {
-			const auto& SceneTexture = SceneContext.GetSceneColorTexture();
-			constexpr auto DispatchX = FMobileHzbSystem::kHzbTexWidth / GroupSizeX;
-			constexpr auto DispatchY = FMobileHzbSystem::kHzbTexHeight / GroupSizeY;
-			TShaderMapRef<FMobileHZBBuildCSLevel0> HzbGeneratorShader(View.ShaderMap);
-			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
-			HzbGeneratorShader->BindParameters(RHICmdList, View, SceneTexture, FMobileHzbSystem::GetStructuredBufferRes());
-			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
-			HzbGeneratorShader->UnBindParameters(RHICmdList);
-		}
+public:
+	FMobileTextureBuildCS() : FGlobalShader() {}
+	FMobileTextureBuildCS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
+		: FGlobalShader(Initializer) {
+		ParentTextureMip.Bind(Initializer.ParameterMap, TEXT("ParentTextureMip"), EShaderParameterFlags::SPF_Mandatory);
+		ParentTextureMipSampler.Bind(Initializer.ParameterMap, TEXT("ParentTextureMipSampler"), EShaderParameterFlags::SPF_Mandatory);
+		ParentTextureInvSize.Bind(Initializer.ParameterMap, TEXT("ParentTextureInvSize"), EShaderParameterFlags::SPF_Mandatory);
+		ViewRectSizeMinsOne.Bind(Initializer.ParameterMap, TEXT("ViewRectSizeMinsOne"), EShaderParameterFlags::SPF_Mandatory);
+		FurthestMipOutput_0.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_0"), EShaderParameterFlags::SPF_Optional);
+		FurthestMipOutput_1.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_1"), EShaderParameterFlags::SPF_Optional);
+		FurthestMipOutput_2.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_2"), EShaderParameterFlags::SPF_Optional);
+		FurthestMipOutput_3.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_3"), EShaderParameterFlags::SPF_Optional);
 	}
 
-	//Level1
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) {
+		return true;
+	}
+
+	void BindParameters(
+		FRHICommandList& RHICmdList, 
+		const FViewInfo& View, 
+		const FIntPoint CurrentStartHzbTextureSize,
+		const TRefCountPtr<IPooledRenderTarget>& SceneTexture,
+		const FShaderResourceViewRHIRef& ParentTextureSRV,
+		const TArray<FUnorderedAccessViewRHIRef>& InMipUAVs,
+		const int32 CurrentMipLevel,
+		const int32 CurrentBatchMipLevelCount)
 	{
-		constexpr auto DispatchX = 2;
-		constexpr auto DispatchY = 1;
-		TShaderMapRef<FMobileHZBBuildCSLevel1> HzbGeneratorShader(View.ShaderMap);
-		RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
-		HzbGeneratorShader->BindParameters(RHICmdList, View, FMobileHzbSystem::GetStructuredBufferRes());
-		RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
-		HzbGeneratorShader->UnBindParameters(RHICmdList);
+		FIntPoint SrcSize;
+		FIntPoint ViewRectSizeMinsOneParameter;
+		if (CurrentMipLevel == 0) {
+			SrcSize.X = FMath::Min(SceneTexture->GetDesc().Extent.X, CurrentStartHzbTextureSize.X * 2);
+			SrcSize.Y = FMath::Min(SceneTexture->GetDesc().Extent.Y, CurrentStartHzbTextureSize.Y * 2);
+			ViewRectSizeMinsOneParameter = View.ViewRect.Size() - FIntPoint(1, 1);
+		}
+		else {
+			SrcSize = CurrentStartHzbTextureSize;
+			ViewRectSizeMinsOneParameter = SrcSize - FIntPoint(1, 1);
+		}
+		FShaderResourceParameter ShaderResourcesArray[4] = { FurthestMipOutput_0, FurthestMipOutput_1, FurthestMipOutput_2, FurthestMipOutput_3 };
+		TArray<FRHITransitionInfo> TextureCSBuildBarriers;
+		if (CurrentMipLevel == 0) {
+			TextureCSBuildBarriers.Emplace(FRHITransitionInfo(SceneTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::DSVWrite | ERHIAccess::RTV, ERHIAccess::SRVCompute));
+		}
+		else {
+			TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel - 1], ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
+		}
+		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 0], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
+		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 1], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
+		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 2], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
+		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 3], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
+
+		RHICmdList.Transition(MakeArrayView(TextureCSBuildBarriers.GetData(), TextureCSBuildBarriers.Num()));
+		
+		//DX11RHI will clear the SRV of the corresponding resource when set UAV
+		for (int32 Index = 0; Index < CurrentBatchMipLevelCount; ++Index) {
+			SetUAVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), ShaderResourcesArray[Index], InMipUAVs[CurrentMipLevel + Index]);
+		}
+
+		if (CurrentMipLevel == 0) {
+			SetTextureParameter(
+				RHICmdList, 
+				RHICmdList.GetBoundComputeShader(), 
+				ParentTextureMip, 
+				ParentTextureMipSampler, 
+				TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(), 
+				SceneTexture->GetRenderTargetItem().ShaderResourceTexture);
+		}
+		else {
+			SetSRVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureMip, ParentTextureSRV);
+			SetSamplerParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureMipSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
+		}
+			
+		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureInvSize, FVector2D(1.f / SrcSize.X, 1.f / SrcSize.Y));
+		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ViewRectSizeMinsOne, ViewRectSizeMinsOneParameter);
+	}
+
+	void UnBindParameters(FRHICommandList& RHICmdList) {
+		SetUAVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), FurthestMipOutput_0, nullptr);
+		SetUAVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), FurthestMipOutput_1, nullptr);
+		SetUAVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), FurthestMipOutput_2, nullptr);
+		SetUAVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), FurthestMipOutput_3, nullptr);
+	}
+
+private:
+	LAYOUT_FIELD(FShaderResourceParameter, ParentTextureMip);
+	LAYOUT_FIELD(FShaderResourceParameter, ParentTextureMipSampler);
+	LAYOUT_FIELD(FShaderParameter, ParentTextureInvSize);
+	LAYOUT_FIELD(FShaderParameter, ViewRectSizeMinsOne);
+	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_0);
+	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_1);
+	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_2);
+	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_3);
+};
+
+IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildPS, "/Engine/Private/MobileHZB.usf", "HZBBuildPS", SF_Pixel);
+IMPLEMENT_GLOBAL_SHADER(FMobileTextureBuildCS, "/Engine/Private/MobileHZB.usf", "HZBBuildCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildCSLevel0, "/Engine/Private/MobileBufferHZB.usf", "HZBBuildCSLevelZero", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FMobileHZBBuildCSLevel1, "/Engine/Private/MobileBufferHZB.usf", "HZBBuildCSLevelOne", SF_Compute);
+
+void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View) {
+	const FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
+	TRefCountPtr<IPooledRenderTarget> SceneTexture = nullptr;
+	if (CVarMobileUseSceneDepth.GetValueOnAnyThread() != 0) {
+		SceneTexture = SceneContext.SceneDepthZ;
+	}
+	else {
+		SceneTexture = SceneContext.GetSceneColor();
+	}
+
+	//TextureBuild
+	if(FMobileHzbSystem::bUseTextureResources) {
+		const int32 NumMipBatch = FMath::DivideAndRoundUp(NumMips, FMobileHzbSystem::ComputeShaderBuildBatch);;
+		FMobileTextureBuildCS::FPermutationDomain PermutationVector;
+		for (int32 LevelBatch = 0; LevelBatch < NumMipBatch; ++LevelBatch) {
+			int32 CurrentStartMipLevel = LevelBatch * FMobileHzbSystem::ComputeShaderBuildBatch;
+			int32 CurrentBatchMipLevelCount = FMath::Min(FMobileHzbSystem::ComputeShaderBuildBatch, NumMips - CurrentStartMipLevel);
+			const FIntPoint CurrentStartHzbTextureSize = FIntPoint(HzbSize.X >> CurrentStartMipLevel, HzbSize.Y >> CurrentStartMipLevel);
+			const int32 DispatchX = CurrentStartHzbTextureSize.X / FMobileHzbSystem::GroupTileSize;
+			const int32 DispatchY = CurrentStartHzbTextureSize.Y / FMobileHzbSystem::GroupTileSize;
+			PermutationVector.Set<FMobileTextureBuildCS::FDimMipLevelCount>(CurrentBatchMipLevelCount);
+			TShaderMapRef<FMobileTextureBuildCS> HzbGeneratorShader(View.ShaderMap, PermutationVector);
+			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
+			HzbGeneratorShader->BindParameters(
+				RHICmdList, 
+				View, 
+				CurrentStartHzbTextureSize, 
+				SceneTexture, 
+				CurrentStartMipLevel > 0 ? MipSRVs[CurrentStartMipLevel - 1] : nullptr, 
+				MipUAVs, 
+				CurrentStartMipLevel, 
+				CurrentBatchMipLevelCount);
+			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
+			HzbGeneratorShader->UnBindParameters(RHICmdList);
+
+			RHICmdList.Transition(FRHITransitionInfo(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
+		}
+	}
+	else {
+		//Level0
+		{
+			constexpr auto DispatchX = FMobileHzbSystem::kHzbTexWidth / GroupSizeX;
+			constexpr auto DispatchY = FMobileHzbSystem::kHzbTexHeight / GroupSizeY;
+			TShaderMapRef<FMobileHZBBuildCSLevel0> HzbGeneratorShader(View.ShaderMap);
+			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
+			HzbGeneratorShader->BindParameters(RHICmdList, View, SceneTexture->GetRenderTargetItem().ShaderResourceTexture, FMobileHzbSystem::GetStructuredBufferRes());
+			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
+			HzbGeneratorShader->UnBindParameters(RHICmdList);
+		}
+
+		//Level1
+		{
+			constexpr auto DispatchX = 2;
+			constexpr auto DispatchY = 1;
+			TShaderMapRef<FMobileHZBBuildCSLevel1> HzbGeneratorShader(View.ShaderMap);
+			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
+			HzbGeneratorShader->BindParameters(RHICmdList, View, FMobileHzbSystem::GetStructuredBufferRes());
+			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
+			HzbGeneratorShader->UnBindParameters(RHICmdList);
+		}
+
+		RHICmdList.Transition(FRHITransitionInfo(MobileHZBBuffer_GPU.UAV, ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
+	}
+}
+
+void FMobileHzbSystem::SetHZBResourcesForShader(FRHICommandList& RHICmdList, const FShaderResourceParameter& TargetResource, const FShaderResourceParameter* TextureSamplerResource) {
+	if (FMobileHzbSystem::bUseTextureResources) {
+		SetTextureParameter(
+			RHICmdList,
+			RHICmdList.GetBoundComputeShader(),
+			TargetResource,
+			*TextureSamplerResource,
+			TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI(),
+			MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture
+		);
+	}
+	else {
+		SetSRVParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), TargetResource, MobileHZBBuffer_GPU.SRV);
 	}
 }
 
@@ -279,10 +421,10 @@ FMobileHzbSystem* FMobileHzbSystem::GetHzbSystemByViewStateUniqueId(const FScene
 
 void FMobileHzbSystem::InitGPUResources(FViewInfo& View) {
 
-	if(FMobileHzbSystem::bUseRaster && HzbSize == FIntPoint::ZeroValue) {
+	if(FMobileHzbSystem::bUseTextureResources && HzbSize == FIntPoint::ZeroValue) {
 		FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
 
-		if constexpr (bUseFullResolution) {
+		if (bUseFullResolution) {
 			const int32 NumMipsX = FMath::Max(FPlatformMath::CeilToInt(FMath::Log2(float(View.ViewRect.Width()))) - 1, 1);
 			const int32 NumMipsY = FMath::Max(FPlatformMath::CeilToInt(FMath::Log2(float(View.ViewRect.Height()))) - 1, 1);
 			NumMips = FMath::Max(NumMipsX, NumMipsY);
@@ -297,18 +439,26 @@ void FMobileHzbSystem::InitGPUResources(FViewInfo& View) {
 		FPooledRenderTargetDesc MobileHZBFurthestDesc = FPooledRenderTargetDesc::Create2DDesc(
 			HzbSize,
 			PF_R16F,
-			FClearValueBinding::None, TexCreate_HideInVisualizeTexture, 
-			TexCreate_ShaderResource | TexCreate_RenderTargetable, 
+			FClearValueBinding::None,
+			TexCreate_HideInVisualizeTexture, 
+			TexCreate_ShaderResource | TexCreate_RenderTargetable | TexCreate_UAV, 
 			/*bInForceSeparateTargetAndShaderResource*/ false,
 			NumMips
 		);
 
 		GRenderTargetPool.FindFreeElement(RHICmdList, MobileHZBFurthestDesc, MobileHZBTexture, TEXT("MobileHZBFurthest"), ERenderTargetTransience::NonTransient);
+		
+		MipSRVs.Reserve(NumMips);
+		MipUAVs.Reserve(NumMips);
+		for (int32 MipLevel = 0; MipLevel < NumMips; ++MipLevel) {
+			MipSRVs.Emplace(RHICreateShaderResourceView(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, MipLevel));
+			MipUAVs.Emplace(RHICreateUnorderedAccessView(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, MipLevel));
+		}
 		return;
 	}
 
 
-	if(!FMobileHzbSystem::bUseRaster && MobileHZBBuffer_GPU.NumBytes == 0){
+	if(!FMobileHzbSystem::bUseTextureResources && MobileHZBBuffer_GPU.NumBytes == 0){
 		constexpr int32 PerElementSize = sizeof(float);
 		constexpr int32 BufferElements = FMobileHzbSystem::kHzbTexWidth * FMobileHzbSystem::kHzbTexHeight * 2;
 		MobileHZBBuffer_GPU.Initialize(PerElementSize, BufferElements, BUF_Static);
@@ -331,7 +481,7 @@ void FMobileHzbSystem::MobileBuildHzb(FRHICommandListImmediate& RHICmdList, cons
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 			CVarMobileUseRaster.GetValueOnAnyThread() != 0
 #else
-			FMobileHzbSystem::bUseRaster
+			FMobileHzbSystem::bUsePixelShader
 #endif
 			)
 		{

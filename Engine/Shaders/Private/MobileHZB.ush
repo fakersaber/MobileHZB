@@ -31,7 +31,6 @@ int MipLevelForRect(int4 RectPixels, int DesiredFootprintPixels)
 	// Note that testing one level higher is always enough as this guarantees 2^(k+2) - 2^k usable pixels after alignment, which is more than the 2^(k+1) required pixels.
 	
 	// Transform coordinates down to coordinates of selected mip level and if they are not within reach increase level by one.
-    // 貌似当 End >= 2^(k + 1), Start <= 2^(k-2)时会触发以下情况
     MipLevel += any((RectPixels.zw >> MipLevel) - (RectPixels.xy >> MipLevel) > MaxPixelOffset) ? 1 : 0;
 
     return MipLevel;
@@ -69,7 +68,7 @@ int4 GetScreenRect(int4 ViewRect, float4 NDCRect)
     
     //Nanite这里是将RectMax偏移半个像素, RectMin偏移半个像素, 若大于等于则代表覆盖, 与寒霜不同的是额外偏移后用来检查Size是否超过半个像素来判断是否应该光栅
     //因为我们主要是需要屏幕空间的Rect信息, 所以使用Nanite算法
-    //这个算法如果Bound与起始位置刚好相交, 不会光栅起始三角形, 若起始位置不相加
+    //这个算法如果Bound与起始位置刚好相交, 不会光栅起始三角形, 若起始位置不相加则可以正常光栅
     int4 Pixels = int4(RectUV * ViewSize.xyxy + ViewRect.xyxy + float4(0.5f, 0.5f, -0.5f, -0.5f));
     //int4 Pixels = int4(RectUV * ViewSize.xyxy + ViewRect.xyxy + float4(0.f, 0.f, -0.5f, -0.5f)); 
     
@@ -78,4 +77,29 @@ int4 GetScreenRect(int4 ViewRect, float4 NDCRect)
     Pixels.zw = min(Pixels.zw, ViewRect.zw - 1);
     
     return Pixels;
+}
+
+bool IsVisibleHZB(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 ViewRect, float4 NDCRect, float MaxZ)
+{
+    int4 LastFrameScreenPixels = GetScreenRect(ViewRect, NDCRect);
+    int4 HZBTexels = int4(LastFrameScreenPixels.xy, max(LastFrameScreenPixels.xy, LastFrameScreenPixels.zw)); //前面执行了+-0.5, 未做PixelCoverTest的情况下必须判断
+    HZBTexels >>= 1;
+            
+    uint HZBLevel = MipLevelForRect(HZBTexels, 2);
+    HZBTexels >>= HZBLevel; // Transform HZB Mip 0 coordinates to coordinates of selected Mip level.
+            
+    float MinDepth = GetMinDepthFromHZB(HZBTexels, HZBLevel, HZBTexture, HZBSampler);     
+    return MinDepth > MaxZ;
+}
+
+bool IsVisibleHZBDownSample(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 ViewRect, float4 NDCRect, float MaxZ)
+{
+    int4 LastFrameScreenPixels = GetScreenRect(ViewRect, NDCRect);
+    int4 HZBTexels = int4(LastFrameScreenPixels.xy, max(LastFrameScreenPixels.xy, LastFrameScreenPixels.zw)); //前面执行了+-0.5, 未做PixelCoverTest的情况下必须判断
+    
+    uint HZBLevel = MipLevelForRect(HZBTexels, 2);
+    HZBTexels >>= HZBLevel; // Transform HZB Mip 0 coordinates to coordinates of selected Mip level.
+            
+    float MinDepth = GetMinDepthFromHZB(HZBTexels, HZBLevel, HZBTexture, HZBSampler);
+    return MinDepth > MaxZ;
 }

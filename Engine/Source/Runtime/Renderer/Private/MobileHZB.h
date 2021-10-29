@@ -23,13 +23,16 @@ struct FMobileHzbSystem {
 	void ReduceMips(FRDGTextureSRVRef RDGTexutreMip, FRDGTextureRef RDGFurthestHZBTexture, const FViewInfo& View, FRDGBuilder& GraphBuilder, uint32 CurOutHzbMipLevel);
 	void MobileRasterBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
 	void MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdList, const FViewInfo& View);
+	void SetHZBResourcesForShader(FRHICommandList& RHICmdList, const FShaderResourceParameter& TargetResource, const FShaderResourceParameter* TextureSamplerResource = nullptr);
 	const FRWBufferStructured& GetStructuredBufferRes() const { return MobileHZBBuffer_GPU; }
 	const FTextureRHIRef GetTextureRes() const { return MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture; }
 
-	uint32 NumMips;
+	int32 NumMips;
 	FIntPoint HzbSize;
 	FRWBufferStructured MobileHZBBuffer_GPU;
 	TRefCountPtr<IPooledRenderTarget> MobileHZBTexture;
+	TArray<FShaderResourceViewRHIRef> MipSRVs;
+	TArray<FUnorderedAccessViewRHIRef> MipUAVs;
 
 	static TMap<uint32, TUniquePtr<FMobileHzbSystem>> ViewUniqueId2HzbSystemMap;
 
@@ -47,6 +50,10 @@ struct FMobileHzbSystem {
 	static constexpr uint8 kHZBMaxMipmap = 9;
 #endif
 
-	static constexpr bool bUseRaster = true;
-	static constexpr bool bUseFullResolution = true;
+	static constexpr bool bUsePixelShader = false;
+	static constexpr bool bUseTextureResources = true;
+	static constexpr bool bUseFullResolution = false;
+	
+	static constexpr int32 ComputeShaderBuildBatch = 4;
+	static constexpr int32 GroupTileSize = 8;
 };

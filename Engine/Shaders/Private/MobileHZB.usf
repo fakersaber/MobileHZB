@@ -24,30 +24,9 @@ void HZBBuildPS
     DeviceZ = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
 #endif
     float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-	
 
-//#if FDimSceneDepth
-//    float2 UV = floor(SvPosition.xy) * float2(0.00390625, 0.0078125);
-//	#if UseSceneDepth
-//		float4 DeviceZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV, 0);
-//		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-//	#else
-//	    float4 DeviceZ = ParentTextureMip.GatherAlpha(ParentTextureMipSampler, UV, 0);
-//		float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-//	#endif
-//#else	
-//	float4 DeviceZ;
-//	const uint2 PixelCoord = floor(SvPosition.xy) * 2;
-//    DeviceZ.x = ParentTextureMip.Load(int3(PixelCoord + int2(0, 0), 0));
-//    DeviceZ.y = ParentTextureMip.Load(int3(PixelCoord + int2(0, 1), 0));
-//    DeviceZ.z = ParentTextureMip.Load(int3(PixelCoord + int2(1, 0), 0));
-//    DeviceZ.w = ParentTextureMip.Load(int3(PixelCoord + int2(1, 1), 0));
-//	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-//#endif
-	
     OutColor = FurthestDeviceZ;
 }
-
 
 #elif 1
 
@@ -90,16 +69,23 @@ uint2 InitialTilePixelPositionForReduction2x2(const uint TileSizeLog2, uint Shar
 }
 
 //1024x512
-#define GROUP_TILE_SIZE 16
-RWTexture2D<float> FurthestMipOutput0;
-RWTexture2D<float> FurthestMipOutput1;
-RWTexture2D<float> FurthestMipOutput2;
-RWTexture2D<float> FurthestMipOutput3;
-groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE][GROUP_TILE_SIZE];
+#define GROUP_TILE_SIZE 8
+#define MAX_MIP_BATCH_SIZE 4
+
+RWTexture2D<float> FurthestMipOutput_0;
+RWTexture2D<float> FurthestMipOutput_1;
+RWTexture2D<float> FurthestMipOutput_2;
+RWTexture2D<float> FurthestMipOutput_3;
+groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE * GROUP_TILE_SIZE]; //Linear Array
 
 [numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
-void HZBBuildCS(uint2 GroupThreadIndex : SV_GroupThreadID, uint2 DispatchThreadId : SV_DispatchThreadID)
+void HZBBuildCS(uint GroupThreadIndex : SV_GroupIndex, uint2 GroupId : SV_GroupID/*, uint2 DispatchThreadId : SV_DispatchThreadID*/)
 {
+    //Calculate DispatchThreadId
+    uint2 GroupThreadId = InitialTilePixelPositionForReduction2x2(MAX_MIP_BATCH_SIZE - 1, GroupThreadIndex);
+    uint2 DispatchThreadId = GROUP_TILE_SIZE * GroupId + GroupThreadId;
+    
+    //Calculate UV
     uint2 PixelCoord = min(DispatchThreadId * 2 + uint2(1, 1), ViewRectSizeMinsOne);
     float2 UV = ParentTextureInvSize * PixelCoord;
     float4 DevicesZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV);
@@ -109,352 +95,42 @@ void HZBBuildCS(uint2 GroupThreadIndex : SV_GroupThreadID, uint2 DispatchThreadI
 	// which is the common case for culling. Special care would be needed here to ensure that this quantization
 	// is fully conservative for the "max" HZB and/or negative numbers, but this is not currently necessary.
     float MinDeviceZ = min(min(DevicesZ.x, DevicesZ.y), min(DevicesZ.z, DevicesZ.w));
-    SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = MinDeviceZ;
-    FurthestMipOutput0[DispatchThreadId] = MinDeviceZ;
-    GroupMemoryBarrierWithGroupSync();
+    FurthestMipOutput_0[DispatchThreadId] = MinDeviceZ;
+    SharedFurthestDeviceZ[GroupThreadIndex] = MinDeviceZ;  
 
-    //解决Bank Confliction,不同Thread肯定访问最好是相邻的, 一个Thread内串行访问无所谓
+    //解决Bank Confliction,不同Thread访问相邻数据而不是同Thread直接访问相邻数据, 一个Thread内串行访问无所谓
     //那么需要满足的条件是不同Thread取出来的数据最好不要Bank冲突
     //同样不知道对应设备的BankSize, 一般为16或32
-
-}
-
-#elif 0
-#define GROUP_TILE_SIZE 8
-groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE][GROUP_TILE_SIZE];
-
-//[Input]
-Texture2D ParentSceneTexture;
-SamplerState ParentSceneTextureSampler;
-
-//[OutPut]
-RWStructuredBuffer<float> HzbStructuredBufferUAV_Zero;
-[numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
-void HZBBuildCSLevelZero(
-	uint2 GroupThreadIndex : SV_GroupThreadID, 
-	uint2 DispatchThreadId : SV_DispatchThreadID)
-{
-    float2 UV = DispatchThreadId * float2(0.00390625, 0.0078125);
-#if 1
-	float4 DeviceZ = ParentSceneTexture.GatherRed(ParentSceneTextureSampler, UV, 0);
-	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-#else
-	float4 DeviceZ = ParentSceneTexture.GatherAlpha(ParentSceneTextureSampler, UV, 0);
-	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-#endif
-	
-    //uint GroupIndexX = GroupThreadIndex.x << 2;
-    SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ; //Write to TGSM
-    uint GlobalThreadIndex = DispatchThreadId.y << 8; // *256
-    GlobalThreadIndex += DispatchThreadId.x;
-    HzbStructuredBufferUAV_Zero[GlobalThreadIndex] = FurthestDeviceZ;
-    GroupMemoryBarrierWithGroupSync();
-
-    bool4 Result = (GroupThreadIndex.xyxy & uint4(1u, 1u, 3u, 3u)) == uint4(0, 0, 0, 0);
-    
-    bool DownSampleLevel_0 = Result.x && Result.y;
-    if (DownSampleLevel_0)
+    [unroll]
+    for (uint MipLevel = 1; MipLevel < DIM_MIP_LEVEL_COUNT; ++MipLevel)
     {
-        float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-        float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 1];   
-        float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 1][GroupThreadIndex.x];
-        float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 1][GroupThreadIndex.x + 1];
-        float FurthestDeviceZ_L1 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L1;
-        
-        uint2 GlobalThread_L1 = DispatchThreadId >> uint2(1u, 1u);
-        uint BufferIndex = (GlobalThread_L1.y << 7) + GlobalThread_L1.x + 0x8000;
-        HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L1;
+        GroupMemoryBarrierWithGroupSync();  
+        const uint TileSize = GROUP_TILE_SIZE >> MipLevel;
+        const uint ReduceBankSize = TileSize * TileSize;
+        DispatchThreadId >>= 1;
+        [branch]
+        if (GroupThreadIndex < ReduceBankSize)
+        {
+            uint4 LDSIndex = GroupThreadIndex + uint4(0, 1, 2, 3) * ReduceBankSize;
+            float4 FurthestDeviceZ = float4(SharedFurthestDeviceZ[LDSIndex.x], SharedFurthestDeviceZ[LDSIndex.y], SharedFurthestDeviceZ[LDSIndex.z], SharedFurthestDeviceZ[LDSIndex.w]);
+            MinDeviceZ = min(min(FurthestDeviceZ.x, FurthestDeviceZ.y), min(FurthestDeviceZ.z, FurthestDeviceZ.w));
+
+            if (MipLevel == 1)
+            {
+                FurthestMipOutput_1[DispatchThreadId] = MinDeviceZ;
+            }
+            else if (MipLevel == 2)
+            {
+                FurthestMipOutput_2[DispatchThreadId] = MinDeviceZ;
+            }
+            else if (MipLevel == 3)
+            {
+                FurthestMipOutput_3[DispatchThreadId] = MinDeviceZ;
+            }
+        }
+        //我们不知道Mobile上一个Wavefront有多大
+        GroupMemoryBarrierWithGroupSync();
+        SharedFurthestDeviceZ[GroupThreadIndex] = MinDeviceZ;
     }
-    GroupMemoryBarrierWithGroupSync();
-
-    bool DownSampleLevel_1 = Result.z && Result.w;
-    if (DownSampleLevel_1)
-    {
-        float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-        float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 2];
-        float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 2][GroupThreadIndex.x];
-        float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 2][GroupThreadIndex.x + 2];
-        float FurthestDeviceZ_L2 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L2;
-        
-        uint2 GlobalThread_L2 = DispatchThreadId >> uint2(2u, 2u);
-        uint BufferIndex = (GlobalThread_L2.y << 6) + GlobalThread_L2.x + 0xA000;
-        HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L2;
-    }
-    GroupMemoryBarrierWithGroupSync();
-
-    
-    bool2 DownSampleLevel_2 = GroupThreadIndex.xy == uint2(0, 0);
-    if (DownSampleLevel_2.x && DownSampleLevel_2.y)
-    {
-        float SharedDepth_0 = SharedFurthestDeviceZ[0][0];
-        float SharedDepth_1 = SharedFurthestDeviceZ[0][4];
-        float SharedDepth_2 = SharedFurthestDeviceZ[4][0];
-        float SharedDepth_3 = SharedFurthestDeviceZ[4][4];
-        float FurthestDeviceZ_L3 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        
-        uint2 GlobalThread_L3 = DispatchThreadId >> uint2(3u, 3u);
-        uint BufferIndex = (GlobalThread_L3.y << 5) + GlobalThread_L3.x + 0xA800;
-        HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L3;
-    }
-}
-
-
-//[OutPut]
-RWStructuredBuffer<float> HzbStructuredBufferUAV_One;
-
-[numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
-void HZBBuildCSLevelOne(
-	uint2 GroupThreadIndex : SV_GroupThreadID,
-	uint2 DispatchThreadId : SV_DispatchThreadID)
-{
-    uint2 ThreadIdBase = DispatchThreadId.xy << uint2(1u, 1u);
-    uint GlobalIndexBase = (ThreadIdBase.y << 5) + 0xA800;
-    
-    //GetBufferIndex
-    uint GlobalIndex_0 = GlobalIndexBase + ThreadIdBase.x;
-    uint GlobalIndex_1 = GlobalIndexBase + ThreadIdBase.x + 1;
-    uint GlobalIndex_2 = GlobalIndexBase + ThreadIdBase.x + 32;
-    uint GlobalIndex_3 = GlobalIndexBase + ThreadIdBase.x + 33;
-    
-    float Depth_0 = HzbStructuredBufferUAV_One[GlobalIndex_0];
-    float Depth_1 = HzbStructuredBufferUAV_One[GlobalIndex_1];
-    float Depth_2 = HzbStructuredBufferUAV_One[GlobalIndex_2];
-    float Depth_3 = HzbStructuredBufferUAV_One[GlobalIndex_3];
-    float FurthestDeviceZ_L3 = min(min(Depth_0, Depth_1), min(Depth_2, Depth_3));
-    
-    uint BufferIndex_0 = (DispatchThreadId.y << 4) + DispatchThreadId.x + 0xAA00;
-    HzbStructuredBufferUAV_One[BufferIndex_0] = FurthestDeviceZ_L3;
-    
-    SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L3;
-    GroupMemoryBarrierWithGroupSync();
-    
-    bool4 Result = (GroupThreadIndex.xyxy & uint4(1u, 1u, 3u, 3u)) == uint4(0, 0, 0, 0);
-    bool DownSampleLevel_0 = Result.x && Result.y;
-    if (DownSampleLevel_0)
-    {
-        float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-        float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 1];
-        float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 1][GroupThreadIndex.x];
-        float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 1][GroupThreadIndex.x + 1];
-        float FurthestDeviceZ_L1 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L1;
-        
-        uint2 GlobalThread_L1 = DispatchThreadId >> uint2(1u, 1u);
-        uint BufferIndex = (GlobalThread_L1.y << 3) + GlobalThread_L1.x + 0xAA80;
-        HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L1;
-    }
-    GroupMemoryBarrierWithGroupSync();
-    
-    bool DownSampleLevel_1 = Result.z && Result.w;
-    if (DownSampleLevel_1)
-    {
-        float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-        float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 2];
-        float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 2][GroupThreadIndex.x];
-        float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 2][GroupThreadIndex.x + 2];
-        float FurthestDeviceZ_L2 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L2;
-        
-        uint2 GlobalThread_L2 = DispatchThreadId >> uint2(2u, 2u);
-        uint BufferIndex = (GlobalThread_L2.y << 2) + GlobalThread_L2.x + 0xAAA0u;
-        HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L2;
-    }
-    GroupMemoryBarrierWithGroupSync();
-    
-    bool2 DownSampleLevel_2 = GroupThreadIndex.xy == uint2(0, 0);
-    if (DownSampleLevel_2.x && DownSampleLevel_2.y)
-    {
-        float SharedDepth_0 = SharedFurthestDeviceZ[0][0];
-        float SharedDepth_1 = SharedFurthestDeviceZ[0][4];
-        float SharedDepth_2 = SharedFurthestDeviceZ[4][0];
-        float SharedDepth_3 = SharedFurthestDeviceZ[4][4];
-        float FurthestDeviceZ_L3 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        
-        uint2 GlobalThread_L3 = DispatchThreadId >> uint2(3u, 3u);
-        uint BufferIndex = (GlobalThread_L3.y << 1) + GlobalThread_L3.x + 0xAAA8u;
-        HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L3;
-    }
-}
-
-#elif 0
-
-#define GROUP_TILE_SIZE 16
-groupshared float SharedFurthestDeviceZ[GROUP_TILE_SIZE][GROUP_TILE_SIZE];
-
-//[Input]
-Texture2D ParentSceneTexture;
-SamplerState ParentSceneTextureSampler;
-
-//[OutPut]
-RWStructuredBuffer<float> HzbStructuredBufferUAV_Zero;
-[numthreads(GROUP_TILE_SIZE, GROUP_TILE_SIZE, 1)]
-void HZBBuildCSLevelZero(
-	uint2 GroupThreadIndex : SV_GroupThreadID,
-	uint2 DispatchThreadId : SV_DispatchThreadID)
-{
-	float2 UV = DispatchThreadId * float2(0.001953125, 0.00390625);
-#if UseSceneDepth
-	float4 DeviceZ = ParentSceneTexture.GatherRed(ParentSceneTextureSampler, UV, 0);
-	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-#else
-	float4 DeviceZ = ParentSceneTexture.GatherAlpha(ParentSceneTextureSampler, UV, 0);
-	float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
-#endif
-	
-    //uint GroupIndexX = GroupThreadIndex.x << 2;
-	SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ; //Write to TGSM
-	uint GlobalThreadIndex = DispatchThreadId.y << 9; // *512
-	GlobalThreadIndex += DispatchThreadId.x;
-	HzbStructuredBufferUAV_Zero[GlobalThreadIndex] = FurthestDeviceZ;
-	GroupMemoryBarrierWithGroupSync();
-
-	bool4 Result_0 = (GroupThreadIndex.xyxy & uint4(1u, 1u, 3u, 3u)) == uint4(0, 0, 0, 0);
-	bool2 Result_1 = ((GroupThreadIndex.xy) & uint2(7u, 7u)) == uint2(0, 0);
-	
-	bool DownSampleLevel_0 = Result_0.x && Result_0.y;
-	if (DownSampleLevel_0)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-		float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 1];
-		float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 1][GroupThreadIndex.x];
-		float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 1][GroupThreadIndex.x + 1];
-		float FurthestDeviceZ_L1 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-		SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L1;
-        
-		uint2 GlobalThread_L1 = DispatchThreadId >> uint2(1u, 1u);
-		uint BufferIndex = (GlobalThread_L1.y << 8) + GlobalThread_L1.x + 0x20000;
-		HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L1;
-	}
-	GroupMemoryBarrierWithGroupSync();
-
-	bool DownSampleLevel_1 = Result_0.z && Result_0.w;
-	if (DownSampleLevel_1)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-		float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 2];
-		float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 2][GroupThreadIndex.x];
-		float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 2][GroupThreadIndex.x + 2];
-		float FurthestDeviceZ_L2 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-		SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L2;
-        
-		uint2 GlobalThread_L2 = DispatchThreadId >> uint2(2u, 2u);
-		uint BufferIndex = (GlobalThread_L2.y << 7) + GlobalThread_L2.x + 0x28000;
-		HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L2;
-	}
-	GroupMemoryBarrierWithGroupSync();
-
-
-	bool2 DownSampleLevel_2 = Result_1.x && Result_1.y;
-	if (DownSampleLevel_2.x && DownSampleLevel_2.y)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x];
-		float SharedDepth_1 = SharedFurthestDeviceZ[GroupThreadIndex.y][GroupThreadIndex.x + 4];
-		float SharedDepth_2 = SharedFurthestDeviceZ[GroupThreadIndex.y + 4][GroupThreadIndex.x];
-		float SharedDepth_3 = SharedFurthestDeviceZ[GroupThreadIndex.y + 4][GroupThreadIndex.x + 4];
-		float FurthestDeviceZ_L3 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        
-		uint2 GlobalThread_L3 = DispatchThreadId >> uint2(3u, 3u);
-		uint BufferIndex = (GlobalThread_L3.y << 6) + GlobalThread_L3.x + 0x2A000;
-		HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L3;
-	}
-	GroupMemoryBarrierWithGroupSync();
-	
-	
-	bool2 DownSampleLevel_3 = GroupThreadIndex.xy == uint2(0, 0);
-	if (DownSampleLevel_3.x && DownSampleLevel_2.y)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ[0][0];
-		float SharedDepth_1 = SharedFurthestDeviceZ[0][8];
-		float SharedDepth_2 = SharedFurthestDeviceZ[8][0];
-		float SharedDepth_3 = SharedFurthestDeviceZ[8][8];
-		float FurthestDeviceZ_L3 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        
-		uint2 GlobalThread_L4 = DispatchThreadId >> uint2(4u, 4u);
-		uint BufferIndex = (GlobalThread_L4.y << 5) + GlobalThread_L4.x + 0x2A800;
-		HzbStructuredBufferUAV_Zero[BufferIndex] = FurthestDeviceZ_L3;
-	}
-}
-
-
-#define GROUP_TILE_SIZE_1 8
-groupshared float SharedFurthestDeviceZ_1[GROUP_TILE_SIZE_1][GROUP_TILE_SIZE_1];
-
-//[OutPut]
-RWStructuredBuffer<float> HzbStructuredBufferUAV_One;
-
-[numthreads(GROUP_TILE_SIZE_1, GROUP_TILE_SIZE_1, 1)]
-void HZBBuildCSLevelOne(
-	uint2 GroupThreadIndex : SV_GroupThreadID,
-	uint2 DispatchThreadId : SV_DispatchThreadID)
-{
-	uint2 ThreadIdBase = DispatchThreadId.xy << uint2(1u, 1u);
-	uint GlobalIndexBase = (ThreadIdBase.y << 5) + 0x2A800;
-    
-    //GetBufferIndex
-	uint GlobalIndex_0 = GlobalIndexBase + ThreadIdBase.x;
-	uint GlobalIndex_1 = GlobalIndexBase + ThreadIdBase.x + 1;
-	uint GlobalIndex_2 = GlobalIndexBase + ThreadIdBase.x + 32;
-	uint GlobalIndex_3 = GlobalIndexBase + ThreadIdBase.x + 33;
-    
-	float Depth_0 = HzbStructuredBufferUAV_One[GlobalIndex_0];
-	float Depth_1 = HzbStructuredBufferUAV_One[GlobalIndex_1];
-	float Depth_2 = HzbStructuredBufferUAV_One[GlobalIndex_2];
-	float Depth_3 = HzbStructuredBufferUAV_One[GlobalIndex_3];
-	float FurthestDeviceZ_L3 = min(min(Depth_0, Depth_1), min(Depth_2, Depth_3));
-    
-	uint BufferIndex_0 = (DispatchThreadId.y << 4) + DispatchThreadId.x + 0x2AA00;
-	HzbStructuredBufferUAV_One[BufferIndex_0] = FurthestDeviceZ_L3;
-    
-	SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L3;
-	GroupMemoryBarrierWithGroupSync();
-    
-	bool4 Result = (GroupThreadIndex.xyxy & uint4(1u, 1u, 3u, 3u)) == uint4(0, 0, 0, 0);
-	bool DownSampleLevel_0 = Result.x && Result.y;
-	if (DownSampleLevel_0)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x];
-		float SharedDepth_1 = SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x + 1];
-		float SharedDepth_2 = SharedFurthestDeviceZ_1[GroupThreadIndex.y + 1][GroupThreadIndex.x];
-		float SharedDepth_3 = SharedFurthestDeviceZ_1[GroupThreadIndex.y + 1][GroupThreadIndex.x + 1];
-		float FurthestDeviceZ_L1 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-		SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L1;
-        
-		uint2 GlobalThread_L1 = DispatchThreadId >> uint2(1u, 1u);
-		uint BufferIndex = (GlobalThread_L1.y << 3) + GlobalThread_L1.x + 0x2AA80;
-		HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L1;
-	}
-	GroupMemoryBarrierWithGroupSync();
-    
-	bool DownSampleLevel_1 = Result.z && Result.w;
-	if (DownSampleLevel_1)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x];
-		float SharedDepth_1 = SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x + 2];
-		float SharedDepth_2 = SharedFurthestDeviceZ_1[GroupThreadIndex.y + 2][GroupThreadIndex.x];
-		float SharedDepth_3 = SharedFurthestDeviceZ_1[GroupThreadIndex.y + 2][GroupThreadIndex.x + 2];
-		float FurthestDeviceZ_L2 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-		SharedFurthestDeviceZ_1[GroupThreadIndex.y][GroupThreadIndex.x] = FurthestDeviceZ_L2;
-        
-		uint2 GlobalThread_L2 = DispatchThreadId >> uint2(2u, 2u);
-		uint BufferIndex = (GlobalThread_L2.y << 2) + GlobalThread_L2.x + 0x2AAA0u;
-		HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L2;
-	}
-	GroupMemoryBarrierWithGroupSync();
-    
-	bool2 DownSampleLevel_2 = GroupThreadIndex.xy == uint2(0, 0);
-	if (DownSampleLevel_2.x && DownSampleLevel_2.y)
-	{
-		float SharedDepth_0 = SharedFurthestDeviceZ_1[0][0];
-		float SharedDepth_1 = SharedFurthestDeviceZ_1[0][4];
-		float SharedDepth_2 = SharedFurthestDeviceZ_1[4][0];
-		float SharedDepth_3 = SharedFurthestDeviceZ_1[4][4];
-		float FurthestDeviceZ_L3 = min(min(SharedDepth_0, SharedDepth_1), min(SharedDepth_2, SharedDepth_3));
-        
-		uint2 GlobalThread_L3 = DispatchThreadId >> uint2(3u, 3u);
-		uint BufferIndex = (GlobalThread_L3.y << 1) + GlobalThread_L3.x + 0x2AAA8u;
-		HzbStructuredBufferUAV_One[BufferIndex] = FurthestDeviceZ_L3;
-	}
 }
 #endif
