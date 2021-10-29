@@ -235,16 +235,16 @@ public:
 		const int32 CurrentMipLevel,
 		const int32 CurrentBatchMipLevelCount)
 	{
-		FIntPoint SrcSize;
+		FIntPoint ParentTextureSrcSize;
 		FIntPoint ViewRectSizeMinsOneParameter;
 		if (CurrentMipLevel == 0) {
-			SrcSize.X = FMath::Min(SceneTexture->GetDesc().Extent.X, CurrentStartHzbTextureSize.X * 2);
-			SrcSize.Y = FMath::Min(SceneTexture->GetDesc().Extent.Y, CurrentStartHzbTextureSize.Y * 2);
+			ParentTextureSrcSize.X = FMath::Min(SceneTexture->GetDesc().Extent.X, CurrentStartHzbTextureSize.X * 2);
+			ParentTextureSrcSize.Y = FMath::Min(SceneTexture->GetDesc().Extent.Y, CurrentStartHzbTextureSize.Y * 2);
 			ViewRectSizeMinsOneParameter = View.ViewRect.Size() - FIntPoint(1, 1);
 		}
 		else {
-			SrcSize = CurrentStartHzbTextureSize;
-			ViewRectSizeMinsOneParameter = SrcSize - FIntPoint(1, 1);
+			ParentTextureSrcSize = CurrentStartHzbTextureSize * 2;
+			ViewRectSizeMinsOneParameter = ParentTextureSrcSize - FIntPoint(1, 1);
 		}
 		FShaderResourceParameter ShaderResourcesArray[4] = { FurthestMipOutput_0, FurthestMipOutput_1, FurthestMipOutput_2, FurthestMipOutput_3 };
 		TArray<FRHITransitionInfo> TextureCSBuildBarriers;
@@ -254,11 +254,10 @@ public:
 		else {
 			TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel - 1], ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
 		}
-		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 0], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
-		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 1], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
-		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 2], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
-		TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + 3], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
 
+		for (int32 Index = 0; Index < CurrentBatchMipLevelCount; ++Index) {
+			TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel + Index], ERHIAccess::SRVCompute, ERHIAccess::UAVCompute)); //WAR
+		}
 		RHICmdList.Transition(MakeArrayView(TextureCSBuildBarriers.GetData(), TextureCSBuildBarriers.Num()));
 		
 		//DX11RHI will clear the SRV of the corresponding resource when set UAV
@@ -280,7 +279,7 @@ public:
 			SetSamplerParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureMipSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
 		}
 			
-		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureInvSize, FVector2D(1.f / SrcSize.X, 1.f / SrcSize.Y));
+		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureInvSize, FVector2D(1.f / ParentTextureSrcSize.X, 1.f / ParentTextureSrcSize.Y));
 		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ViewRectSizeMinsOne, ViewRectSizeMinsOneParameter);
 	}
 
@@ -325,8 +324,8 @@ void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdLis
 			int32 CurrentStartMipLevel = LevelBatch * FMobileHzbSystem::ComputeShaderBuildBatch;
 			int32 CurrentBatchMipLevelCount = FMath::Min(FMobileHzbSystem::ComputeShaderBuildBatch, NumMips - CurrentStartMipLevel);
 			const FIntPoint CurrentStartHzbTextureSize = FIntPoint(HzbSize.X >> CurrentStartMipLevel, HzbSize.Y >> CurrentStartMipLevel);
-			const int32 DispatchX = CurrentStartHzbTextureSize.X / FMobileHzbSystem::GroupTileSize;
-			const int32 DispatchY = CurrentStartHzbTextureSize.Y / FMobileHzbSystem::GroupTileSize;
+			const int32 DispatchX = FMath::DivideAndRoundUp(CurrentStartHzbTextureSize.X, FMobileHzbSystem::GroupTileSize);
+			const int32 DispatchY = FMath::DivideAndRoundUp(CurrentStartHzbTextureSize.Y, FMobileHzbSystem::GroupTileSize);
 			PermutationVector.Set<FMobileTextureBuildCS::FDimMipLevelCount>(CurrentBatchMipLevelCount);
 			TShaderMapRef<FMobileTextureBuildCS> HzbGeneratorShader(View.ShaderMap, PermutationVector);
 			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
@@ -341,9 +340,9 @@ void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdLis
 				CurrentBatchMipLevelCount);
 			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
 			HzbGeneratorShader->UnBindParameters(RHICmdList);
-
-			RHICmdList.Transition(FRHITransitionInfo(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
 		}
+		//PerMip transition?
+		RHICmdList.Transition(FRHITransitionInfo(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
 	}
 	else {
 		//Level0

@@ -89,7 +89,7 @@ bool IsVisibleHZB(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 Vie
     HZBTexels >>= HZBLevel; // Transform HZB Mip 0 coordinates to coordinates of selected Mip level.
             
     float MinDepth = GetMinDepthFromHZB(HZBTexels, HZBLevel, HZBTexture, HZBSampler);     
-    return MinDepth > MaxZ;
+    return MinDepth <= MaxZ;
 }
 
 bool IsVisibleHZBDownSample(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 ViewRect, float4 NDCRect, float MaxZ)
@@ -101,5 +101,5 @@ bool IsVisibleHZBDownSample(Texture2D<float> HZBTexture, SamplerState HZBSampler
     HZBTexels >>= HZBLevel; // Transform HZB Mip 0 coordinates to coordinates of selected Mip level.
             
     float MinDepth = GetMinDepthFromHZB(HZBTexels, HZBLevel, HZBTexture, HZBSampler);
-    return MinDepth > MaxZ;
+    return MinDepth <= MaxZ;
 }
