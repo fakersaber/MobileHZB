@@ -5,6 +5,7 @@ SamplerState ParentTextureMipSampler;
 
 float2 ParentTextureInvSize;
 uint2 ViewRectSizeMinsOne;
+uint FirstDownSampleBuild;
 
 #if PIXELSHADER
 void HZBBuildPS
@@ -86,8 +87,16 @@ void HZBBuildCS(uint GroupThreadIndex : SV_GroupIndex, uint2 GroupId : SV_GroupI
     uint2 DispatchThreadId = GROUP_TILE_SIZE * GroupId + GroupThreadId;
     
     //Calculate UV
-    uint2 PixelCoord = min(DispatchThreadId * 2 + uint2(1, 1), ViewRectSizeMinsOne);
-    float2 UV = ParentTextureInvSize * PixelCoord;
+    float2 UV;
+    if (FirstDownSampleBuild > 0)
+    {
+        UV = DispatchThreadId * ParentTextureInvSize;
+    }
+    else
+    {
+        uint2 PixelCoord = min(DispatchThreadId * 2 + uint2(1, 1), ViewRectSizeMinsOne);
+        UV = ParentTextureInvSize * PixelCoord;
+    }
     float4 DevicesZ = ParentTextureMip.GatherRed(ParentTextureMipSampler, UV);
     
     // NOTE: For 16-bit HZB buffers we should be careful about rounding in the right direction for Min/Max.

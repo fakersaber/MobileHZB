@@ -52,7 +52,7 @@ struct FMobileHzbSystem {
 
 	static constexpr bool bUsePixelShader = false;
 	static constexpr bool bUseTextureResources = true;
-	static constexpr bool bUseFullResolution = true;
+	static constexpr bool bUseFullResolution = false;
 	
 	static constexpr int32 ComputeShaderBuildBatch = 4;
 	static constexpr int32 GroupTileSize = 8;

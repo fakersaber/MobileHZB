@@ -53,6 +53,21 @@ float GetMinDepthFromHZB(/*float2 HZBSize, */uint4 SamplePosition, uint HZBLevel
     return MinDepth;
 }
 
+float GetMinDepthFromHZBDownSample(uint4 SamplePosition, uint2 CenterSamplePos, uint SampleLevel, Texture2D<float> HZBTexture, SamplerState HZBSampler)
+{
+    float4 Depth;
+    Depth.x = HZBTexture.Load(int3(SamplePosition.x, SamplePosition.y, SampleLevel));
+    Depth.y = HZBTexture.Load(int3(SamplePosition.z, SamplePosition.w, SampleLevel));
+    Depth.z = HZBTexture.Load(int3(SamplePosition.x, SamplePosition.w, SampleLevel));
+    Depth.w = HZBTexture.Load(int3(SamplePosition.z, SamplePosition.y, SampleLevel));
+    float CenterDepth = HZBTexture.Load(int3(CenterSamplePos.xy, SampleLevel));
+    float2 Depth_0 = min(Depth.xy, Depth.zw);
+    float Depth_1 = min(Depth_0.x, Depth_0.y);
+    float Depth_2 = min(Depth_1, CenterDepth);
+    
+    return Depth_2;
+}
+
 int4 GetScreenRect(int4 ViewRect, float4 NDCRect)
 {
     // Map from NDC [-1,1] to target 'texture UV' [0,1] space, X[-1,1] -> [0,1], Y[-1,1] -> [1, 0]
@@ -94,12 +109,29 @@ bool IsVisibleHZB(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 Vie
 
 bool IsVisibleHZBDownSample(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 ViewRect, float4 NDCRect, float MaxZ)
 {
-    int4 LastFrameScreenPixels = GetScreenRect(ViewRect, NDCRect);
-    int4 HZBTexels = int4(LastFrameScreenPixels.xy, max(LastFrameScreenPixels.xy, LastFrameScreenPixels.zw)); //前面执行了+-0.5, 未做PixelCoverTest的情况下必须判断
+    float4 RectUV = saturate(NDCRect * float2(0.5f, -0.5f).xyxy + 0.5f).xwzy;
+    float2 ViewSize = ViewRect.zw - ViewRect.xy;
+    float4 RectPixels = RectUV * ViewSize.xyxy;
+    float2 RectSize = (RectPixels.zw - RectPixels.xy) * 0.5; // Level - 1
+    float Level = min(max(ceil(log2(max(RectSize.x, RectSize.y))), 0.f), 8.f);
+    uint SampleLevel = uint(Level);
     
-    uint HZBLevel = MipLevelForRect(HZBTexels, 2);
-    HZBTexels >>= HZBLevel; // Transform HZB Mip 0 coordinates to coordinates of selected Mip level.
-            
-    float MinDepth = GetMinDepthFromHZB(HZBTexels, HZBLevel, HZBTexture, HZBSampler);
+    //https://docs.microsoft.com/en-us/windows/win32/direct3d9/nearest-point-sampling
+    //纹理下标应当映射到[-0.5, n - 0.5]
+    float4 SamplePosition = RectPixels - 0.5f;
+    SamplePosition = max(SamplePosition, ViewRect.xyxy);
+    SamplePosition = min(SamplePosition, ViewRect.zwzw - 1);
+    uint4 MaxSamplePos = round(SamplePosition);
+    uint4 CurSamplePos = MaxSamplePos >> SampleLevel;
+    uint2 CenterSamplePos = (MaxSamplePos.xy + MaxSamplePos.zw) >> (SampleLevel + 1);
+    float MinDepth = GetMinDepthFromHZBDownSample(CurSamplePos, SampleLevel, CenterSamplePos, HZBTexture, HZBSampler);
     return MinDepth <= MaxZ;
+    
+    //float4 Pixels = RectUV * ViewSize.xyxy - 0.5f;
+    //Pixels.xy = max(Pixels.xy, ViewRect.xy);
+    //Pixels.zw = min(Pixels.zw, ViewRect.zw - 1); 
+    //int4 HZBTexels = Pixels >> 1;
+    //uint HZBLevel = MipLevelForRect(HZBTexels, 2);
+    //uint2 CenterHZBTexels = (Pixels.xy + Pixels.zw) >> (HZBLevel + 1);
+    //HZBTexels >>= HZBLevel;
 }

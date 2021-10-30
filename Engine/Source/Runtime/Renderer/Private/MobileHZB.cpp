@@ -215,6 +215,7 @@ public:
 		ParentTextureMipSampler.Bind(Initializer.ParameterMap, TEXT("ParentTextureMipSampler"), EShaderParameterFlags::SPF_Mandatory);
 		ParentTextureInvSize.Bind(Initializer.ParameterMap, TEXT("ParentTextureInvSize"), EShaderParameterFlags::SPF_Mandatory);
 		ViewRectSizeMinsOne.Bind(Initializer.ParameterMap, TEXT("ViewRectSizeMinsOne"), EShaderParameterFlags::SPF_Mandatory);
+		FirstDownSampleBuild.Bind(Initializer.ParameterMap, TEXT("FirstDownSampleBuild"), EShaderParameterFlags::SPF_Mandatory);
 		FurthestMipOutput_0.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_0"), EShaderParameterFlags::SPF_Optional);
 		FurthestMipOutput_1.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_1"), EShaderParameterFlags::SPF_Optional);
 		FurthestMipOutput_2.Bind(Initializer.ParameterMap, TEXT("FurthestMipOutput_2"), EShaderParameterFlags::SPF_Optional);
@@ -235,17 +236,6 @@ public:
 		const int32 CurrentMipLevel,
 		const int32 CurrentBatchMipLevelCount)
 	{
-		FIntPoint ParentTextureSrcSize;
-		FIntPoint ViewRectSizeMinsOneParameter;
-		if (CurrentMipLevel == 0) {
-			ParentTextureSrcSize.X = FMath::Min(SceneTexture->GetDesc().Extent.X, CurrentStartHzbTextureSize.X * 2);
-			ParentTextureSrcSize.Y = FMath::Min(SceneTexture->GetDesc().Extent.Y, CurrentStartHzbTextureSize.Y * 2);
-			ViewRectSizeMinsOneParameter = View.ViewRect.Size() - FIntPoint(1, 1);
-		}
-		else {
-			ParentTextureSrcSize = CurrentStartHzbTextureSize * 2;
-			ViewRectSizeMinsOneParameter = ParentTextureSrcSize - FIntPoint(1, 1);
-		}
 		FShaderResourceParameter ShaderResourcesArray[4] = { FurthestMipOutput_0, FurthestMipOutput_1, FurthestMipOutput_2, FurthestMipOutput_3 };
 		TArray<FRHITransitionInfo> TextureCSBuildBarriers;
 		if (CurrentMipLevel == 0) {
@@ -279,8 +269,29 @@ public:
 			SetSamplerParameter(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureMipSampler, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
 		}
 			
-		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureInvSize, FVector2D(1.f / ParentTextureSrcSize.X, 1.f / ParentTextureSrcSize.Y));
+		FIntPoint ParentTextureSrcSize;
+		FIntPoint ViewRectSizeMinsOneParameter;
+		uint32 FirstDownSampleBuildParameter = 0;
+
+		if (CurrentMipLevel == 0) {
+			if (!FMobileHzbSystem::bUseFullResolution) {
+				ParentTextureSrcSize = CurrentStartHzbTextureSize;
+				FirstDownSampleBuildParameter = 1;
+				ViewRectSizeMinsOneParameter = FIntPoint::ZeroValue;
+			}
+			else {
+				ParentTextureSrcSize = SceneTexture->GetDesc().Extent;
+				ViewRectSizeMinsOneParameter = View.ViewRect.Size() - FIntPoint(1, 1);
+			}
+		}
+		else {
+			ParentTextureSrcSize = CurrentStartHzbTextureSize * 2;
+			ViewRectSizeMinsOneParameter = ParentTextureSrcSize - FIntPoint(1, 1);
+		}
+
 		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ViewRectSizeMinsOne, ViewRectSizeMinsOneParameter);
+		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), ParentTextureInvSize, FVector2D(1.f / ParentTextureSrcSize.X, 1.f / ParentTextureSrcSize.Y));
+		SetShaderValue(RHICmdList, RHICmdList.GetBoundComputeShader(), FirstDownSampleBuild, FirstDownSampleBuildParameter);
 	}
 
 	void UnBindParameters(FRHICommandList& RHICmdList) {
@@ -295,6 +306,7 @@ private:
 	LAYOUT_FIELD(FShaderResourceParameter, ParentTextureMipSampler);
 	LAYOUT_FIELD(FShaderParameter, ParentTextureInvSize);
 	LAYOUT_FIELD(FShaderParameter, ViewRectSizeMinsOne);
+	LAYOUT_FIELD(FShaderParameter, FirstDownSampleBuild);
 	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_0);
 	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_1);
 	LAYOUT_FIELD(FShaderResourceParameter, FurthestMipOutput_2);
