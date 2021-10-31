@@ -2,6 +2,24 @@
 
 #include "Common.ush"
 
+#define USE_LOW_RESLUTION   1
+
+#if USE_LOW_RESLUTION
+	#define HIZ_SIZE_WIDTH 256
+	#define HIZ_SIZE_HEIGHT 128
+    #define HIZ_SIZE_WIDTH_FLOAT 256.f
+    #define HIZ_SIZE_HEIGHT_FLOAT 128.f
+	#define HIZ_BUFFER_WIDTH 255.f
+	#define HIZ_BUFFER_HEIGHT 127.f
+	#define MaxMipLevel 7.f
+#else
+	#define HIZ_SIZE_WIDTH 512.f
+	#define HIZ_SIZE_HEIGHT 256.f
+	#define HIZ_BUFFER_WIDTH 511.f
+	#define HIZ_BUFFER_HEIGHT 255.f
+	#define MaxMipLevel 8.f
+#endif
+
 // Rect is inclusive [Min.xy, Max.xy]
 int MipLevelForRect(int4 RectPixels, int DesiredFootprintPixels)
 {
@@ -107,31 +125,114 @@ bool IsVisibleHZB(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 Vie
     return MinDepth <= MaxZ;
 }
 
-bool IsVisibleHZBDownSample(Texture2D<float> HZBTexture, SamplerState HZBSampler, int4 ViewRect, float4 NDCRect, float MaxZ)
+bool IsVisibleHZBDownSample(Texture2D<float> HZBTexture, SamplerState HZBSampler, float4 NDCRect, float MaxZ)
 {
+    int4 ViewRect = int4(0, 0, HIZ_SIZE_WIDTH, HIZ_SIZE_HEIGHT);
     float4 RectUV = saturate(NDCRect * float2(0.5f, -0.5f).xyxy + 0.5f).xwzy;
-    float2 ViewSize = ViewRect.zw - ViewRect.xy;
-    float4 RectPixels = RectUV * ViewSize.xyxy;
-    float2 RectSize = (RectPixels.zw - RectPixels.xy) * 0.5; // Level - 1
-    float Level = min(max(ceil(log2(max(RectSize.x, RectSize.y))), 0.f), 8.f);
+    float2 ViewSize = float2(HIZ_SIZE_WIDTH_FLOAT, HIZ_SIZE_HEIGHT_FLOAT);
+    int4 Pixels = int4(RectUV * ViewSize.xyxy);
+    Pixels.xy = max(Pixels.xy, ViewRect.xy);
+    Pixels.zw = min(Pixels.zw, ViewRect.zw - 1);
+    //int4 HZBTexels = Pixels >> 1;
+    
+    uint HZBLevel = MipLevelForRect(Pixels, 2);
+    int4 HZBTexels = Pixels >> HZBLevel;
+    //HZBTexels >>= HZBLevel;
+
+    float MinDepth = GetMinDepthFromHZB(HZBTexels, HZBLevel, HZBTexture, HZBSampler);
+    return MinDepth <= MaxZ;
+}
+
+bool IsVisibleHZBDownSampleUnreal4(Texture2D<float> HZBTexture, SamplerState HZBSampler, float4 NDCRect, float MaxZ)
+{
+    float4 Rect = (NDCRect * float2(0.5, -0.5).xyxy + float4(0.5, 0.5, 0.5, 0.5)).xwzy; //超出屏幕外时不应该使用saturate,无法计算正确的大小
+    float4 RectPixels = Rect * float4(HIZ_SIZE_WIDTH_FLOAT, HIZ_SIZE_HEIGHT_FLOAT, HIZ_SIZE_WIDTH_FLOAT, HIZ_SIZE_HEIGHT_FLOAT);
+    float2 RectSize = (RectPixels.zw - RectPixels.xy) * 0.5; // + 0.001 *0.5 表示level - 1,因为第0级也是一层
+    float Level = min(max(ceil(log2(max(RectSize.x, RectSize.y))), 0.f), MaxMipLevel);
     uint SampleLevel = uint(Level);
     
     //https://docs.microsoft.com/en-us/windows/win32/direct3d9/nearest-point-sampling
     //纹理下标应当映射到[-0.5, n - 0.5]
-    float4 SamplePosition = RectPixels - 0.5f;
-    SamplePosition = max(SamplePosition, ViewRect.xyxy);
-    SamplePosition = min(SamplePosition, ViewRect.zwzw - 1);
+    float4 SamplePosition = Rect * float4(HIZ_SIZE_WIDTH, HIZ_SIZE_HEIGHT, HIZ_SIZE_WIDTH, HIZ_SIZE_HEIGHT) - 0.5f;
+    SamplePosition = max(SamplePosition, float4(0.f, 0.f, 0.f, 0.f));
+    SamplePosition = min(SamplePosition, float4(HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT, HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT));
     uint4 MaxSamplePos = round(SamplePosition);
     uint4 CurSamplePos = MaxSamplePos >> SampleLevel;
-    uint2 CenterSamplePos = (MaxSamplePos.xy + MaxSamplePos.zw) >> (SampleLevel + 1);
-    float MinDepth = GetMinDepthFromHZBDownSample(CurSamplePos, SampleLevel, CenterSamplePos, HZBTexture, HZBSampler);
-    return MinDepth <= MaxZ;
     
-    //float4 Pixels = RectUV * ViewSize.xyxy - 0.5f;
-    //Pixels.xy = max(Pixels.xy, ViewRect.xy);
-    //Pixels.zw = min(Pixels.zw, ViewRect.zw - 1); 
-    //int4 HZBTexels = Pixels >> 1;
-    //uint HZBLevel = MipLevelForRect(HZBTexels, 2);
-    //uint2 CenterHZBTexels = (Pixels.xy + Pixels.zw) >> (HZBLevel + 1);
-    //HZBTexels >>= HZBLevel;
+    //float FurthestDepth = GetDepthFromBuffer(HZBResource, CurSamplePos, CenterSamplePos, SampleLevel);
+    //float FurthestDepth = GetMinDepthFromHZBDownSample(CurSamplePos, CenterSamplePos, SampleLevel, HZBResource, HZBTextureSampler);
+    float MinDepth = GetMinDepthFromHZB(CurSamplePos, SampleLevel, HZBTexture, HZBSampler);
+    return MinDepth <= MaxZ;
+}
+
+bool IsVisibleHZBStorageBufferDownSampleUnreal4(StructuredBuffer<float> HZBBuffer, float4 NDCRect, float MaxZ)
+{
+    float4 Rect = (NDCRect * float2(0.5, -0.5).xyxy + float4(0.5, 0.5, 0.5, 0.5)).xwzy; //超出屏幕外时不应该使用saturate,无法计算正确的大小
+    float4 RectPixels = Rect * float4(HIZ_SIZE_WIDTH_FLOAT, HIZ_SIZE_HEIGHT_FLOAT, HIZ_SIZE_WIDTH_FLOAT, HIZ_SIZE_HEIGHT_FLOAT);
+    float2 RectSize = (RectPixels.zw - RectPixels.xy) * 0.5; // + 0.001 *0.5 表示level - 1,因为第0级也是一层
+    float Level = min(max(ceil(log2(max(RectSize.x, RectSize.y))), 0.f), MaxMipLevel);
+    uint SampleLevel = uint(Level);
+    
+    //https://docs.microsoft.com/en-us/windows/win32/direct3d9/nearest-point-sampling
+    //纹理下标应当映射到[-0.5, n - 0.5]
+    float4 SamplePosition = Rect * float4(HIZ_SIZE_WIDTH, HIZ_SIZE_HEIGHT, HIZ_SIZE_WIDTH, HIZ_SIZE_HEIGHT) - 0.5f;
+    SamplePosition = max(SamplePosition, float4(0.f, 0.f, 0.f, 0.f));
+    SamplePosition = min(SamplePosition, float4(HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT, HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT));
+    uint4 MaxSamplePos = round(SamplePosition);
+    uint4 CurSamplePos = MaxSamplePos >> SampleLevel;
+    
+    //float FurthestDepth = GetDepthFromBuffer(HZBResource, CurSamplePos, CenterSamplePos, SampleLevel);
+    //float FurthestDepth = GetMinDepthFromHZBDownSample(CurSamplePos, CenterSamplePos, SampleLevel, HZBResource, HZBTextureSampler);
+#if USE_LOW_RESLUTION
+    uint2 OffsetAndSizeArray[8] =
+    {
+        uint2(0u, 256u),
+        uint2(0x8000u, 128u),
+        uint2(0xA000u, 64u),
+        uint2(0xA800u, 32u),
+        uint2(0xAA00u, 16u),
+        uint2(0xAA80u, 8u),
+        uint2(0xAAA0u, 4u),
+        uint2(0xAAA8u, 2u)
+    };
+#else
+    uint2 OffsetAndSizeArray[9] =
+    {
+        uint2(0, 512u),
+		uint2(0x20000, 256u),
+		uint2(0x28000, 128u),
+		uint2(0x2A000, 64u),
+		uint2(0x2A800, 32u),
+		uint2(0x2AA00, 16u),
+		uint2(0x2AA80, 8u),
+		uint2(0x2AAA0, 4u),
+		uint2(0x2AAA8, 2u),
+    };
+#endif
+
+    
+    uint2 OffsetAndSize = OffsetAndSizeArray[SampleLevel];  
+    //uint LocalIndex_0 = OffsetAndSize.y * CurSamplePos.y + CurSamplePos.x;
+    //uint GlobalIndex_0 = LocalIndex_0 + OffsetAndSize.x;
+    //uint LocalIndex_1 = OffsetAndSize.y * CurSamplePos.w + CurSamplePos.z;
+    //uint GlobalIndex_1 = LocalIndex_1 + OffsetAndSize.x; 
+    //uint LocalIndex_2 = OffsetAndSize.y * CurSamplePos.y + CurSamplePos.z;
+    //uint GlobalIndex_2 = LocalIndex_2 + OffsetAndSize.x;
+    //uint LocalIndex_3 = OffsetAndSize.y * CurSamplePos.w + CurSamplePos.x;
+    //uint GlobalIndex_3 = LocalIndex_3 + OffsetAndSize.x;
+    //uint LocalIndex_4 = OffsetAndSize.y * CenterSamplePos.y + CenterSamplePos.x;
+    //uint GlobalIndex_4 = LocalIndex_4 + OffsetAndSize.x;
+    uint4 LocalIndex = CurSamplePos.yyww * OffsetAndSize.yyyy + CurSamplePos.xzxz;
+    uint4 GlobalIndex = LocalIndex + OffsetAndSize.xxxx;
+    
+    float4 Depth;
+    Depth.x = HZBBuffer[GlobalIndex.x];
+    Depth.y = HZBBuffer[GlobalIndex.y];
+    Depth.z = HZBBuffer[GlobalIndex.z];
+    Depth.w = HZBBuffer[GlobalIndex.w];
+  
+    float2 Depth_0 = min(Depth.xy, Depth.zw);
+    float MinDepth = min(Depth_0.x, Depth_0.y);
+
+    return MinDepth <= MaxZ;
 }
