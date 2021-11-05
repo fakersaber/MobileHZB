@@ -16,7 +16,7 @@ void HZBBuildCSLevelZero(
 	uint2 DispatchThreadId : SV_DispatchThreadID)
 {
     float2 UV = DispatchThreadId * float2(0.00390625, 0.0078125);
-#if 1
+#if UseSceneDepth
     float4 DeviceZ = ParentSceneTexture.GatherRed(ParentSceneTextureSampler, UV, 0);
     float FurthestDeviceZ = min(min(DeviceZ.x, DeviceZ.y), min(DeviceZ.z, DeviceZ.w));
 #else

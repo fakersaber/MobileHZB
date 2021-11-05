@@ -46,7 +46,7 @@ class FMobileHZBBuildPS : public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FMobileHZBBuildPS, FGlobalShader)
 
 	class FDimSceneDepth : SHADER_PERMUTATION_BOOL("FDimSceneDepth"); //第一个Pass,从alpha中取LinearDepth
-	class FUseSceneDepth : SHADER_PERMUTATION_BOOL("UseSceneDepth"); //测试使用深度图是否剔除更多
+	class FUseSceneDepth : SHADER_PERMUTATION_BOOL("UseSceneDepth"); 
 
 	using FPermutationDomain = TShaderPermutationDomain<FDimSceneDepth, FUseSceneDepth>;
 
@@ -131,10 +131,11 @@ class FMobileHZBBuildCSLevel0 : public FGlobalShader
 {
 	DECLARE_GLOBAL_SHADER(FMobileHZBBuildCSLevel0);
 
+	class FUseSceneDepth : SHADER_PERMUTATION_BOOL("UseSceneDepth");
+	using FPermutationDomain = TShaderPermutationDomain<FUseSceneDepth>;
+
 public:
-
 	FMobileHZBBuildCSLevel0() : FGlobalShader() {}
-
 	FMobileHZBBuildCSLevel0(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
 		: FGlobalShader(Initializer) {
 
@@ -148,7 +149,6 @@ public:
 	}
 
 	void BindParameters(FRHICommandList& RHICmdList, const FViewInfo& View, const FTextureRHIRef& SceneTexture, const FRWBufferStructured& HzbStructuredBuffer) {
-		RHICmdList.Transition(FRHITransitionInfo(SceneTexture, ERHIAccess::DSVWrite, ERHIAccess::SRVCompute)); //RAW
 		// There are cases where we ping-pong images between UAVCompute and SRVCompute. In that case it may be more efficient to leave the image in VK_IMAGE_LAYOUT_GENERAL
 		// (at the very least, it will mean fewer image barriers). There's no good way to detect this though, so it might be better if the high level code just did UAV
 		// to UAV transitions in that case, instead of SRV <-> UAV.
@@ -238,10 +238,7 @@ public:
 	{
 		FShaderResourceParameter ShaderResourcesArray[4] = { FurthestMipOutput_0, FurthestMipOutput_1, FurthestMipOutput_2, FurthestMipOutput_3 };
 		TArray<FRHITransitionInfo> TextureCSBuildBarriers;
-		if (CurrentMipLevel == 0) {
-			TextureCSBuildBarriers.Emplace(FRHITransitionInfo(SceneTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::DSVWrite | ERHIAccess::RTV, ERHIAccess::SRVCompute));
-		}
-		else {
+		if (CurrentMipLevel != 0) {
 			TextureCSBuildBarriers.Emplace(FRHITransitionInfo(InMipUAVs[CurrentMipLevel - 1], ERHIAccess::UAVCompute, ERHIAccess::SRVCompute));
 		}
 
@@ -323,9 +320,11 @@ void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdLis
 	TRefCountPtr<IPooledRenderTarget> SceneTexture = nullptr;
 	if (CVarMobileUseSceneDepth.GetValueOnAnyThread() != 0) {
 		SceneTexture = SceneContext.SceneDepthZ;
+		RHICmdList.Transition(FRHITransitionInfo(SceneTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::RTV, ERHIAccess::SRVCompute));
 	}
 	else {
 		SceneTexture = SceneContext.GetSceneColor();
+		RHICmdList.Transition(FRHITransitionInfo(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::DSVWrite, ERHIAccess::SRVCompute));
 	}
 
 	//TextureBuild
@@ -361,7 +360,9 @@ void FMobileHzbSystem::MobileComputeBuildHZB(FRHICommandListImmediate& RHICmdLis
 		{
 			constexpr auto DispatchX = FMobileHzbSystem::kHzbTexWidth / GroupSizeX;
 			constexpr auto DispatchY = FMobileHzbSystem::kHzbTexHeight / GroupSizeY;
-			TShaderMapRef<FMobileHZBBuildCSLevel0> HzbGeneratorShader(View.ShaderMap);
+			FMobileHZBBuildCSLevel0::FPermutationDomain PermutationVector;
+			PermutationVector.Set<FMobileHZBBuildCSLevel0::FUseSceneDepth>(CVarMobileUseSceneDepth.GetValueOnRenderThread() == 1);
+			TShaderMapRef<FMobileHZBBuildCSLevel0> HzbGeneratorShader(View.ShaderMap, PermutationVector);
 			RHICmdList.SetComputeShader(HzbGeneratorShader.GetComputeShader());
 			HzbGeneratorShader->BindParameters(RHICmdList, View, SceneTexture->GetRenderTargetItem().ShaderResourceTexture, FMobileHzbSystem::GetStructuredBufferRes());
 			RHICmdList.DispatchComputeShader(DispatchX, DispatchY, 1);
@@ -459,6 +460,8 @@ void FMobileHzbSystem::InitGPUResources(FViewInfo& View) {
 
 		GRenderTargetPool.FindFreeElement(RHICmdList, MobileHZBFurthestDesc, MobileHZBTexture, TEXT("MobileHZBFurthest"), ERenderTargetTransience::NonTransient);
 		
+		RHICmdList.Transition(FRHITransitionInfo(MobileHZBTexture->GetRenderTargetItem().ShaderResourceTexture, ERHIAccess::Unknown, ERHIAccess::SRVCompute));
+
 		MipSRVs.Reserve(NumMips);
 		MipUAVs.Reserve(NumMips);
 		for (int32 MipLevel = 0; MipLevel < NumMips; ++MipLevel) {

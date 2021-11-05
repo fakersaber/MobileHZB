@@ -158,10 +158,10 @@ bool IsVisibleHZBDownSampleUnreal4(Texture2D<float> HZBTexture, SamplerState HZB
     SamplePosition = min(SamplePosition, float4(HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT, HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT));
     uint4 MaxSamplePos = round(SamplePosition);
     uint4 CurSamplePos = MaxSamplePos >> SampleLevel;
+    uint2 CenterSamplePos = (MaxSamplePos.xy + MaxSamplePos.zw) >> (SampleLevel + 1);
     
-    //float FurthestDepth = GetDepthFromBuffer(HZBResource, CurSamplePos, CenterSamplePos, SampleLevel);
-    //float FurthestDepth = GetMinDepthFromHZBDownSample(CurSamplePos, CenterSamplePos, SampleLevel, HZBResource, HZBTextureSampler);
-    float MinDepth = GetMinDepthFromHZB(CurSamplePos, SampleLevel, HZBTexture, HZBSampler);
+    float MinDepth = GetMinDepthFromHZBDownSample(CurSamplePos, CenterSamplePos, SampleLevel, HZBTexture, HZBSampler);
+    //float MinDepth = GetMinDepthFromHZB(CurSamplePos, SampleLevel, HZBTexture, HZBSampler);
     return MinDepth <= MaxZ;
 }
 
@@ -180,9 +180,8 @@ bool IsVisibleHZBStorageBufferDownSampleUnreal4(StructuredBuffer<float> HZBBuffe
     SamplePosition = min(SamplePosition, float4(HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT, HIZ_BUFFER_WIDTH, HIZ_BUFFER_HEIGHT));
     uint4 MaxSamplePos = round(SamplePosition);
     uint4 CurSamplePos = MaxSamplePos >> SampleLevel;
+    uint2 CenterSamplePos = (MaxSamplePos.xy + MaxSamplePos.zw) >> (SampleLevel + 1);
     
-    //float FurthestDepth = GetDepthFromBuffer(HZBResource, CurSamplePos, CenterSamplePos, SampleLevel);
-    //float FurthestDepth = GetMinDepthFromHZBDownSample(CurSamplePos, CenterSamplePos, SampleLevel, HZBResource, HZBTextureSampler);
 #if USE_LOW_RESLUTION
     uint2 OffsetAndSizeArray[8] =
     {
@@ -225,14 +224,19 @@ bool IsVisibleHZBStorageBufferDownSampleUnreal4(StructuredBuffer<float> HZBBuffe
     uint4 LocalIndex = CurSamplePos.yyww * OffsetAndSize.yyyy + CurSamplePos.xzxz;
     uint4 GlobalIndex = LocalIndex + OffsetAndSize.xxxx;
     
+    uint CenterLocalIndex = CenterSamplePos.y * OffsetAndSize.y + CenterSamplePos.x;
+    uint GlobalCenterIndex = CenterLocalIndex + OffsetAndSize.x;
+    
     float4 Depth;
     Depth.x = HZBBuffer[GlobalIndex.x];
     Depth.y = HZBBuffer[GlobalIndex.y];
     Depth.z = HZBBuffer[GlobalIndex.z];
     Depth.w = HZBBuffer[GlobalIndex.w];
+    float CenterDepth = HZBBuffer[GlobalCenterIndex];
   
     float2 Depth_0 = min(Depth.xy, Depth.zw);
-    float MinDepth = min(Depth_0.x, Depth_0.y);
+    float Depth_1 = min(Depth_0.x, Depth_0.y);
+    float MinDepth = min(Depth_1, CenterDepth);
 
     return MinDepth <= MaxZ;
 }
